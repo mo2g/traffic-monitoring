@@ -9,22 +9,29 @@ actor DataStore {
 
     private var dbWriter: DatabaseWriter?
     private var isSetup = false
+    private var currentDBPath: String?
 
-    private init() {}
+    init() {}
 
     // MARK: - Setup
 
     /// 初始化数据库（首次使用时调用，后续调用无副作用）
     func setup() throws {
+        try setup(at: Constants.databaseURL)
+    }
+
+    /// 使用自定义路径初始化数据库（用于测试或自定义部署）
+    func setup(at dbURL: URL) throws {
         guard !isSetup else { return }
         isSetup = true
+        currentDBPath = dbURL.path
+
         // 确保目录存在
         try FileManager.default.createDirectory(
-            at: Constants.databaseDirectory,
+            at: dbURL.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
 
-        let dbURL = Constants.databaseURL
         print("[DataStore] Opening database at \(dbURL.path)")
 
         let writer = try DatabasePool(path: dbURL.path)
@@ -176,12 +183,21 @@ actor DataStore {
 
     /// 数据库文件大小
     func databaseSize() -> Int64 {
-        guard dbWriter != nil,
+        guard let path = currentDBPath,
               let attrs = try? FileManager.default
-                .attributesOfItem(atPath: Constants.databaseURL.path) else {
+                .attributesOfItem(atPath: path) else {
             return 0
         }
         return (attrs[.size] as? Int64) ?? 0
+    }
+
+    // MARK: - Testing
+
+    /// 重置状态（仅用于测试）
+    func resetForTesting() {
+        isSetup = false
+        dbWriter = nil
+        currentDBPath = nil
     }
 }
 

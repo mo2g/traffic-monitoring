@@ -15,10 +15,7 @@ let package = Package(
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
             ],
-            path: "Sources",
-            resources: [
-                .copy("Core/Collector/collector.sh"),
-            ]
+            path: "Sources"
         ),
         .testTarget(
             name: "TrafficMonitorTests",

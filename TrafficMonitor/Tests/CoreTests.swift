@@ -75,6 +75,45 @@ final class NettopParserTests: XCTestCase {
         let records = NettopParser.parse(raw)
         XCTAssertTrue(records.isEmpty)  // kernel_task 永远被排除
     }
+
+    func testParseUdpOutput() {
+        let raw = """
+        nettop -l1 -P -n, polling every 1.0 seconds
+                                                                     bytes_in    bytes_out    state
+        Google Chrome.1234           tcp4 192.168.1.1:443      1.0MiB     500KiB   Established
+        ---SNAPSHOT_SEPARATOR---
+        nettop -l1 -P -n, polling every 1.0 seconds
+                                                                     bytes_in    bytes_out    state
+        Microsoft Edge.5678          udp4 *:*                   2.0MB      1.0MB    Established
+        """
+
+        let records = NettopParser.parse(raw)
+        XCTAssertEqual(records.count, 2)
+
+        let chrome = records.first { $0.execName == "Google Chrome" }
+        let edge   = records.first { $0.execName == "Microsoft Edge" }
+        XCTAssertNotNil(chrome)
+        XCTAssertNotNil(edge)
+    }
+
+    func testParseUdpTcpSamePidMerged() {
+        let raw = """
+        nettop -l1 -P -n, polling every 1.0 seconds
+                                                                     bytes_in    bytes_out    state
+        Google Chrome.1234           tcp4 192.168.1.1:443      1.0MiB     500KiB   Established
+        ---SNAPSHOT_SEPARATOR---
+        nettop -l1 -P -n, polling every 1.0 seconds
+                                                                     bytes_in    bytes_out    state
+        Google Chrome.1234           udp4 *:*                   100KiB     50.0KiB  Established
+        """
+
+        let records = NettopParser.parse(raw)
+        // 同一 PID 在 TCP 和 UDP 都出现，应合并为一条
+        XCTAssertEqual(records.count, 1)
+        let r = records[0]
+        XCTAssertEqual(r.bytesIn, 1_048_576 + 102_400)   // 1.0MiB + 100KiB
+        XCTAssertEqual(r.bytesOut, 512_000 + 51_200)     // 500KiB + 50.0KiB
+    }
 }
 
 /// DeltaCalculator 单元测试

@@ -4,14 +4,15 @@ import Foundation
 ///
 /// 解析 `nettop -l 1 -n -P -J bytes_in,bytes_out,state` 的输出。
 ///
-/// 输出格式示例:
+/// 真实 nettop 输出格式（macOS 14+）:
 /// ```
-/// nettop -l1 -P -n, polling every 1.0 seconds
-///                                                      bytes_in    bytes_out    state
-/// Google Chrome.1234           tcp4 192.168.1.1:443      1.0MiB     500KiB   Established
-/// Google Chrome Helper.1235    tcp4 10.0.0.1:80          100KiB     50.0KiB  Established
-/// com.apple.WebKit.5678        tcp4 *:*                   0B         0B       Listen
+///                                                                      state        bytes_in       bytes_out
+/// mDNSResponder.408                                                                   126 MiB         115 MiB
+/// Google Chrome.1234                                                                  1.0 MiB        500 KiB
 /// ```
+///
+/// 注意：nettop 输出的字节值是 **空格分隔** 的数值+单位（如 "126 MiB"），
+/// 不是紧凑格式（如 "126MiB"）。解析器会自动合并相邻的数值和单位 token。
 enum NettopParser {
     /// 解析 nettop 的文本输出，返回进程记录列表
     /// - Parameter raw: nettop 的 stdout 原始文本
@@ -31,6 +32,9 @@ enum NettopParser {
                 continue
             }
 
+            // 跳过 TCP/UDP 分隔符
+            if trimmed == "---SNAPSHOT_SEPARATOR---" { continue }
+
             // 跳过汇总/统计行
             if trimmed.hasPrefix("-----") || trimmed.hasPrefix("=") {
                 continue
@@ -38,8 +42,11 @@ enum NettopParser {
 
             // 找 "进程名.PID" token——可能在 parts[0]，也可能在后续
             // （因为进程名含空格，如 "Google Chrome.1234" → split 为 ["Google", "Chrome.1234"]）
-            let parts = lineComponents(trimmed)
-            guard parts.count >= 3 else { continue }
+            let rawParts = lineComponents(trimmed)
+            guard rawParts.count >= 3 else { continue }
+
+            // 合并空格分隔的字节值：netp 输出 "126 MiB" 变成 "126MiB"
+            let parts = mergeByteTokens(rawParts)
 
             // 找到匹配 "name.PID" 格式的 token
             let pidPattern = try? NSRegularExpression(pattern: #"\.\d{1,6}$"#)
@@ -67,10 +74,10 @@ enum NettopParser {
             // 在 PID token 之后的 part 中找字节值
             let tailParts = Array(parts[(idx + 1)...])
             let bytePattern = try! NSRegularExpression(
-                pattern: #"^[\d.]+[KMGT]?i?B$"#
+                pattern: #"^[\d.]+([KMGT]?i?B|B)$"#
             )
             var byteValues: [String] = []
-            for part in tailParts.suffix(4) {
+            for part in tailParts {
                 let range = NSRange(part.startIndex..., in: part)
                 if bytePattern.firstMatch(in: part, range: range) != nil {
                     byteValues.append(part)
@@ -110,9 +117,33 @@ enum NettopParser {
 
     // MARK: - Private
 
-    /// 将一行按空白分割为数组（保留空元素之间的空白意义）
+    /// 将一行按空白分割为数组
     private static func lineComponents(_ line: String) -> [String] {
         line.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+    }
+
+    /// 合并相邻的 "数值" + "字节单位" token → "数值单位"
+    /// 例如: ["126", "MiB", "115", "MiB"] → ["126MiB", "115MiB"]
+    /// 保持向后兼容: ["1.0MiB", "500KiB"] → ["1.0MiB", "500KiB"] (已紧凑则不动)
+    private static func mergeByteTokens(_ parts: [String]) -> [String] {
+        let byteUnitPattern = try? NSRegularExpression(pattern: #"^([KMGT]?i?B|B)$"#)
+        let numericPattern   = try? NSRegularExpression(pattern: #"^[\d.]+$"#)
+
+        var merged: [String] = []
+        var i = 0
+        while i < parts.count {
+            // 如果当前是纯数字，且下一个是字节单位 → 合并
+            if i + 1 < parts.count,
+               numericPattern?.firstMatch(in: parts[i], range: NSRange(parts[i].startIndex..., in: parts[i])) != nil,
+               byteUnitPattern?.firstMatch(in: parts[i + 1], range: NSRange(parts[i + 1].startIndex..., in: parts[i + 1])) != nil {
+                merged.append(parts[i] + parts[i + 1])
+                i += 2
+            } else {
+                merged.append(parts[i])
+                i += 1
+            }
+        }
+        return merged
     }
 
     /// 解析 nettop 的字节值（如 "1.0MiB" → 1048576）

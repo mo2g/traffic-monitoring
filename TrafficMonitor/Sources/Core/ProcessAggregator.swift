@@ -2,7 +2,7 @@ import Foundation
 
 /// 进程聚合器
 ///
-/// 将 nettop 的原始 ProcessRecord（每个 PID 一条）聚合到 ProcessIdentifier（Bundle ID 优先）。
+/// 将 PID 级别的 delta 聚合到 ProcessIdentifier（Bundle ID 优先）。
 ///
 /// 聚合规则:
 ///  1. PID → ProcessHelper.bundleIdentifier(for:) → 获取 Bundle ID
@@ -12,36 +12,44 @@ import Foundation
 /// 这样 Chrome 的几十个子进程（Google Chrome, Google Chrome Helper, ...）
 /// 全部聚合到一个条目下。
 enum ProcessAggregator {
-    /// 聚合原始进程记录
+    /// 将 PID 级别的 delta 按 Bundle ID 聚合
     ///
-    /// - Parameter records: nettop 解析出的原始记录
-    /// - Returns: 更新后的快照（records 字段已按 identifier 聚合）
-    static func aggregate(
-        records: [ProcessRecord],
-        timestamp: Date = Date()
-    ) -> ProcessSnapshot {
-        var grouped: [ProcessIdentifier: (bytesIn: Int64, bytesOut: Int64)] = [:]
+    /// - Parameter pidDeltas: DeltaCalculator 输出的 PID 级别增量
+    /// - Returns: 按 ProcessIdentifier 聚合后的 ProcessDelta 列表
+    static func aggregateDeltas(_ pidDeltas: [PIDDelta]) -> [ProcessDelta] {
+        var grouped: [ProcessIdentifier: (bytesIn: Int64, bytesOut: Int64, interval: TimeInterval, isEstimated: Bool)] = [:]
 
-        for record in records {
-            let identifier = record.identifier
+        for d in pidDeltas {
+            let identifier = ProcessIdentifier(
+                bundleId: ProcessHelper.bundleIdentifier(for: d.pid),
+                execName: d.execName
+            )
 
             if let existing = grouped[identifier] {
                 grouped[identifier] = (
-                    bytesIn: existing.bytesIn + record.bytesIn,
-                    bytesOut: existing.bytesOut + record.bytesOut
+                    bytesIn: existing.bytesIn + d.bytesIn,
+                    bytesOut: existing.bytesOut + d.bytesOut,
+                    interval: d.interval,
+                    isEstimated: existing.isEstimated && d.isEstimated
                 )
             } else {
                 grouped[identifier] = (
-                    bytesIn: record.bytesIn,
-                    bytesOut: record.bytesOut
+                    bytesIn: d.bytesIn,
+                    bytesOut: d.bytesOut,
+                    interval: d.interval,
+                    isEstimated: d.isEstimated
                 )
             }
         }
 
-        return ProcessSnapshot(
-            timestamp: timestamp,
-            records: grouped,
-            rawRecords: records
-        )
+        return grouped.map { ident, vals in
+            ProcessDelta(
+                identifier: ident,
+                bytesIn: vals.bytesIn,
+                bytesOut: vals.bytesOut,
+                interval: vals.interval,
+                isEstimated: vals.isEstimated
+            )
+        }
     }
 }

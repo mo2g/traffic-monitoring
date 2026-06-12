@@ -21,16 +21,3 @@ struct ProcessRecord: Hashable {
         lhs.pid == rhs.pid
     }
 }
-
-/// 一次 nettop 快照（按进程聚合后的结果）
-struct ProcessSnapshot {
-    /// 快照时间戳
-    let timestamp: Date
-
-    /// 按 ProcessIdentifier 聚合后的记录
-    /// Key = ProcessIdentifier, Value = 该进程组的总 bytes_in / bytes_out
-    let records: [ProcessIdentifier: (bytesIn: Int64, bytesOut: Int64)]
-
-    /// 原始记录（未聚合），用于调试
-    let rawRecords: [ProcessRecord]
-}

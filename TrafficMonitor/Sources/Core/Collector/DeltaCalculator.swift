@@ -5,82 +5,103 @@ import Foundation
 /// nettop 返回的是进程自启动以来的累计字节数，需要计算相邻快照的差值
 /// 才能得到某个时间段内的实际流量增量。
 ///
-/// ```
-/// 快照时序:
-///   t0: Snap0 { Chrome: 100MB, Edge: 50MB  }
-///   t1: Snap1 { Chrome: 150MB, Edge: 80MB  }  → Δ = Snap1 - Snap0
-///   t2: Snap2 { Chrome: 180MB, Edge: 100MB }  → Δ = Snap2 - Snap1
-/// ```
+/// **核心设计：在 PID 级别计算增量，然后再按 Bundle ID 聚合。**
 ///
-/// 进程重启处理:
-///   如果同名（同 Bundle ID）进程的累计字节比上次小，说明进程重启了
-///   → 使用当前值作为增量（而不是负值）
+/// 为什么必须在 PID 级别计算：
+/// - 进程（PID）频繁创建和退出（Chrome 每开/关一个 tab 就是一次生命周期）
+/// - 如果在 Bundle ID 聚合之后再算差值，PID 退出会导致聚合累计值回退
+/// - 累计值回退触发 /10 保守估算 → 虚高速率尖峰
+/// - PID 级别：退出的 PID 直接不贡献 delta，新 PID 的累计值即为其增量
+///
+/// ```
+/// PID 增量流程:
+///   Snap1: PID 100: 5GB, PID 101: 3GB
+///   Snap2: PID 100: 5.1GB, PID 102: 0.5GB (101 退出, 102 新出现)
+///   → PID 100 delta: 0.1GB, PID 102 delta: 0.5GB, PID 101: 无 delta
+///   → 按 Bundle ID 聚合后: Chrome = 0.6GB ✓
+/// ```
 enum DeltaCalculator {
-    /// 计算两个快照之间的流量差值
+    /// 计算两个快照之间的 PID 级别流量差值
     ///
     /// - Parameters:
-    ///   - prev: 上一个快照（nil 表示首次采集，仅记录基线不产生增量）
-    ///   - curr: 当前快照
+    ///   - prev: 上一个快照的原始记录（nil = 首次采集，仅记录基线不产生增量）
+    ///   - curr: 当前快照的原始记录
     ///   - interval: 两次快照之间的时间间隔（秒）
-    /// - Returns: 按 ProcessIdentifier 聚合的流量增量列表
+    ///   - knownPIDs: 历史上见过的所有 PID 集合（用于区分「真正的新进程」和「上次快照遗漏的老进程」）
+    /// - Returns: 按 PID 计算的流量增量列表
     static func compute(
-        from prev: ProcessSnapshot?,
-        to curr: ProcessSnapshot,
-        interval: TimeInterval
-    ) -> [ProcessDelta] {
+        from prev: [ProcessRecord]?,
+        to curr: [ProcessRecord],
+        interval: TimeInterval,
+        knownPIDs: Set<Int32> = []
+    ) -> [PIDDelta] {
         guard let prev = prev else {
             // 首次快照，没有基准，不产生增量
             return []
         }
 
-        var deltas: [ProcessDelta] = []
+        // 构建 PID → 上次记录的映射
+        var prevMap: [Int32: ProcessRecord] = [:]
+        for r in prev {
+            prevMap[r.pid] = r
+        }
 
-        // 当前快照中的所有进程
-        for (identifier, currStats) in curr.records {
-            let prevStats = prev.records[identifier]
+        let safeInterval = max(interval, 0.1)
+        let roundedInterval = Int64(max(safeInterval, 1.0).rounded())
+        var deltas: [PIDDelta] = []
 
-            var deltaIn: Int64
-            var deltaOut: Int64
+        for r in curr {
+            if let p = prevMap[r.pid] {
+                // 已有 PID：正常计算差值
+                var deltaIn = r.bytesIn - p.bytesIn
+                var deltaOut = r.bytesOut - p.bytesOut
 
-            if let prev = prevStats {
-                // 正常情况：计算差值
-                deltaIn = currStats.bytesIn - prev.bytesIn
-                deltaOut = currStats.bytesOut - prev.bytesOut
-            } else {
-                // 新出现的进程（上次快照中没有）
-                // 使用当前值的 10% 作为保守估计（避免将历史累计全部算入）
-                let conservativeRatio: Int64 = 10 // ratio = current/10
-                deltaIn = max(currStats.bytesIn / conservativeRatio, 0)
-                deltaOut = max(currStats.bytesOut / conservativeRatio, 0)
-            }
+                // 计数器回退（极少见：PID 被复用且新进程累计比旧进程小）
+                if deltaIn < 0 { deltaIn = max(r.bytesIn / 10, 0) }
+                if deltaOut < 0 { deltaOut = max(r.bytesOut / 10, 0) }
 
-            // 处理计数器回退（进程重启）
-            if deltaIn < 0 { deltaIn = max(currStats.bytesIn / 10, 0) }
-            if deltaOut < 0 { deltaOut = max(currStats.bytesOut / 10, 0) }
+                guard deltaIn > 0 || deltaOut > 0 else { continue }
 
-            // 忽略无变化
-            guard deltaIn > 0 || deltaOut > 0 else { continue }
-
-            // 过滤异常值（单次增量不应超过合理的网络带宽 * 时间）
-            let maxReasonable = Int64(100_000_000) * Int64(interval) // 100 MB/s * interval
-            if deltaIn > maxReasonable || deltaOut > maxReasonable {
-                // 可能是进程重启导致的异常，使用保守估计
-                let cappedIn = min(deltaIn, maxReasonable)
-                let cappedOut = min(deltaOut, maxReasonable)
-                deltas.append(ProcessDelta(
-                    identifier: identifier,
-                    bytesIn: cappedIn,
-                    bytesOut: cappedOut,
-                    interval: interval,
-                    isEstimated: false
-                ))
-            } else {
-                deltas.append(ProcessDelta(
-                    identifier: identifier,
+                deltas.append(PIDDelta(
+                    pid: r.pid,
+                    execName: r.execName,
                     bytesIn: deltaIn,
                     bytesOut: deltaOut,
-                    interval: interval,
+                    interval: safeInterval,
                     isEstimated: false
+                ))
+            } else if knownPIDs.contains(r.pid) {
+                // 「回归」PID：历史上见过，但上次快照中没有（可能是 nettop 输出遗漏）
+                // 使用保守估算 /3，避免将长生命周期进程的全部累计算作增量
+                guard r.bytesIn > 0 || r.bytesOut > 0 else { continue }
+                let estIn = max(r.bytesIn / 3, 0)
+                let estOut = max(r.bytesOut / 3, 0)
+                guard estIn > 0 || estOut > 0 else { continue }
+
+                deltas.append(PIDDelta(
+                    pid: r.pid,
+                    execName: r.execName,
+                    bytesIn: estIn,
+                    bytesOut: estOut,
+                    interval: safeInterval,
+                    isEstimated: true
+                ))
+            } else {
+                // 真正的新 PID：从未见过，累计值小，直接使用（加合理上限）
+                guard r.bytesIn > 0 || r.bytesOut > 0 else { continue }
+
+                // 10 MB/s * interval 上限（对新进程足够，同时防止极端异常值）
+                let maxNewPID = Int64(10_000_000) * roundedInterval
+                let cappedIn = min(r.bytesIn, maxNewPID)
+                let cappedOut = min(r.bytesOut, maxNewPID)
+
+                deltas.append(PIDDelta(
+                    pid: r.pid,
+                    execName: r.execName,
+                    bytesIn: cappedIn,
+                    bytesOut: cappedOut,
+                    interval: safeInterval,
+                    isEstimated: true
                 ))
             }
         }
@@ -89,7 +110,17 @@ enum DeltaCalculator {
     }
 }
 
-/// 单个进程的流量增量
+/// 单个 PID 的流量增量
+struct PIDDelta {
+    let pid: Int32
+    let execName: String
+    let bytesIn: Int64
+    let bytesOut: Int64
+    let interval: TimeInterval
+    let isEstimated: Bool
+}
+
+/// 单个进程（Bundle ID 聚合后）的流量增量
 struct ProcessDelta {
     /// 进程标识符
     let identifier: ProcessIdentifier
@@ -103,7 +134,7 @@ struct ProcessDelta {
     /// 采集间隔（秒）
     let interval: TimeInterval
 
-    /// 是否估算值（进程重启导致的实际值不确定时）
+    /// 是否估算值（新 PID 或计数器回退时）
     let isEstimated: Bool
 
     /// 总字节数

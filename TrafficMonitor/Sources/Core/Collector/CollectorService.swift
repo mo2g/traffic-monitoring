@@ -2,9 +2,9 @@ import Combine
 import Foundation
 import UserNotifications
 
-/// 采集服务状态机
+/// 采集服务
 ///
-/// 协调 NettopProcess ↔ TrafficStore（内存缓存）↔ DataStore（批量持久化）。
+/// NettopDaemon (持久进程 + AsyncStream 队列) ↔ TrafficStore (内存缓存) ↔ DataStore (批量持久化)
 ///
 /// ```
 ///   idle → running → stopped
@@ -20,19 +20,19 @@ final class CollectorService: ObservableObject {
     @Published var saveInterval: TimeInterval = Constants.batchSaveInterval
     @Published private(set) var latestDeltas: [ProcessDelta] = []
     @Published private(set) var snapshotCount: Int = 0
-    @Published private(set) var listTick: Int = 0   // 节流后的列表重建信号
+    @Published private(set) var listTick: Int = 0
     @Published var alertRules: [AlertRule] = []
 
-    private let nettopProcess = NettopProcess()
-    private var tickTimer: Timer?
+    private let daemon = NettopDaemon()
+    private var collectionTask: Task<Void, Never>?
     private var saveTimer: Timer?
-    private var previousSnapshot: ProcessSnapshot?
+    private var previousRecords: [ProcessRecord]?
     private var lastSnapshotTime: Date?
-    private var isTicking = false
+    private var knownPIDs: Set<Int32> = []
     private var alertThrottle: [String: Date] = [:]
     private let alertThrottleInterval: TimeInterval = 60
     private var lastListTick = Date.distantPast
-    private let listTickInterval: TimeInterval = 2.0  // 最多每秒 0.5 次列表重建
+    private let listTickInterval: TimeInterval = 1.5
 
     private init() {}
 
@@ -43,43 +43,56 @@ final class CollectorService: ObservableObject {
 
         do { try await DataStore.shared.setup() }
         catch {
-            await LogStore.shared.log("数据库初始化失败: \(error)", level: .error, tag: "Collector")
+            await LogStore.shared.log("DB 初始化失败: \(error)", level: .error, tag: "Collector")
             status = .error("Database init failed"); return
         }
 
-        guard let raw = await nettopProcess.takeSnapshot() else {
-            await LogStore.shared.log("nettop 不可用", level: .error, tag: "Collector")
-            status = .error("nettop 不可用"); return
+        // 启动持久 nettop 守护进程 → AsyncStream, timer 按 interval 取快照
+        let stream = await daemon.start(minInterval: interval)
+        await LogStore.shared.log("nettop daemon 已启动", level: .info, tag: "Collector")
+
+        // 等第一张快照到达 (用于初始化 TrafficStore)
+        var initialRaw: String? = nil
+        for await (raw, _) in stream {
+            initialRaw = raw
+            break
+        }
+        guard let raw = initialRaw else {
+            await LogStore.shared.log("nettop daemon 无数据", level: .error, tag: "Collector")
+            await daemon.stop(); status = .error("netop 无数据"); return
         }
 
         let records = NettopParser.parse(raw)
         guard !records.isEmpty else {
             await LogStore.shared.log("nettop 返回空数据", level: .error, tag: "Collector")
-            status = .error("netop 无数据"); return
+            await daemon.stop(); status = .error("netop 无数据"); return
         }
 
-        let snapshot = ProcessAggregator.aggregate(records: records, timestamp: Date())
-        let activeDeltas = activeKeysFrom(snapshot)
+        let activeDeltas = activeKeysFrom(records)
 
-        // 查询这些活跃进程的历史数据
         let now = Date().timeIntervalSince1970
-        let since = now - 86400 // 默认查今天
+        let since = now - 86400
         let historical = (try? await DataStore.shared.querySummary(since: since, limit: 100)) ?? []
 
         await TrafficStore.shared.initialize(activeDeltas: activeDeltas, historical: historical)
-        await LogStore.shared.log("TrafficStore 已初始化: \(activeDeltas.count) 活跃进程, \(historical.count) 有历史", level: .info, tag: "Collector")
+        await LogStore.shared.log("TrafficStore: \(activeDeltas.count) active, \(historical.count) historical", level: .info, tag: "Collector")
 
-        previousSnapshot = snapshot
+        previousRecords = records
         lastSnapshotTime = Date()
+        knownPIDs = Set(records.map(\.pid))
         status = .running
-        startTimers()
-        await LogStore.shared.log("采集已启动 (\(interval)s 采集, \(saveInterval)s 保存)", level: .info, tag: "Collector")
+
+        // 启动消费循环 (迭代 stream 剩余部分)
+        runCollectionLoop(stream)
+
+        // 启动批量保存 timer
+        startSaveTimer()
+        await LogStore.shared.log("采集已启动 (\(interval)s tick, \(saveInterval)s 保存)", level: .info, tag: "Collector")
     }
 
     func stop() {
-        tickTimer?.invalidate(); tickTimer = nil
-        saveTimer?.invalidate(); saveTimer = nil
         Task {
+            await daemon.stop()
             await TrafficStore.shared.flushPending()
             await TrafficStore.shared.reset()
         }
@@ -89,41 +102,40 @@ final class CollectorService: ObservableObject {
 
     func loadAlertRules() { alertRules = AlertStore.shared.load() }
 
-    // MARK: - Private
+    // MARK: - Collection Loop
 
-    private func startTimers() {
-        tickTimer?.invalidate(); saveTimer?.invalidate()
-        tickTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in await self?.tick() }
+    private func runCollectionLoop(_ stream: AsyncStream<(String, Date)>) {
+        collectionTask = Task { [weak self] in
+            for await (raw, ts) in stream {
+                guard let self, status == .running else { break }
+                await self.processSnapshot(raw, timestamp: ts)
+            }
         }
-        saveTimer = Timer.scheduledTimer(withTimeInterval: saveInterval, repeats: true) { _ in
-            Task { await TrafficStore.shared.flushPending() }
-        }
-        Task { await tick() }
     }
 
-    private func tick() async {
-        guard status == .running, !isTicking else { return }
-        isTicking = true
-        defer { isTicking = false }
-
-        guard let raw = await nettopProcess.takeSnapshot() else { return }
+    private func processSnapshot(_ raw: String, timestamp: Date) async {
         let records = NettopParser.parse(raw)
         guard !records.isEmpty else { return }
 
-        let timestamp = Date()
-        let snapshot = ProcessAggregator.aggregate(records: records, timestamp: timestamp)
         let intervalTime = lastSnapshotTime.map { timestamp.timeIntervalSince($0) } ?? interval
-        let deltas = DeltaCalculator.compute(from: previousSnapshot, to: snapshot, interval: intervalTime)
+
+        // 先在 PID 级别计算增量，再按 Bundle ID 聚合
+        // 这避免了 PID 退出导致聚合累计值回退 → /10 估算 → 速率虚高的问题
+        // knownPIDs 用于区分「真正的新进程」和「上次快照遗漏的老进程」
+        let pidDeltas = DeltaCalculator.compute(
+            from: previousRecords, to: records,
+            interval: intervalTime, knownPIDs: knownPIDs
+        )
+        let deltas = ProcessAggregator.aggregateDeltas(pidDeltas)
 
         // 告警检查
         if !deltas.isEmpty {
             for rule in alertRules where rule.enabled {
                 for delta in deltas where rule.isTriggered(by: delta) {
-                    let throttleKey = rule.id.uuidString + "_" + delta.identifier.description
+                    let key = rule.id.uuidString + "_" + delta.identifier.description
                     let now = Date()
-                    if let last = alertThrottle[throttleKey], now.timeIntervalSince(last) < alertThrottleInterval { continue }
-                    alertThrottle[throttleKey] = now
+                    if let last = alertThrottle[key], now.timeIntervalSince(last) < alertThrottleInterval { continue }
+                    alertThrottle[key] = now
                     postAlert(rule: rule, delta: delta)
                 }
             }
@@ -132,12 +144,13 @@ final class CollectorService: ObservableObject {
         // 累加到内存缓存
         await TrafficStore.shared.accumulate(deltas: deltas, timestamp: timestamp.timeIntervalSince1970, interval: intervalTime)
 
-        previousSnapshot = snapshot
+        previousRecords = records
         lastSnapshotTime = timestamp
+        knownPIDs.formUnion(records.map(\.pid))
         latestDeltas = deltas
         snapshotCount += 1
 
-        // 节流列表重建信号 —— nettop 每次 150-300ms，1s 间隔时避免每 tick 重建
+        // 节流列表重建
         let now = Date()
         if now.timeIntervalSince(lastListTick) >= listTickInterval {
             lastListTick = now
@@ -145,15 +158,27 @@ final class CollectorService: ObservableObject {
         }
     }
 
-    /// 从第一次快照生成伪增量（用于初始化 TrafficStore）
-    private func activeKeysFrom(_ snapshot: ProcessSnapshot) -> [ProcessDelta] {
-        snapshot.records.map { key, vals in
-            ProcessDelta(identifier: key, bytesIn: vals.bytesIn, bytesOut: vals.bytesOut,
-                         interval: 1, isEstimated: true)
+    // MARK: - Save Timer
+
+    private func startSaveTimer() {
+        saveTimer?.invalidate()
+        saveTimer = Timer.scheduledTimer(withTimeInterval: saveInterval, repeats: true) { _ in
+            Task { await TrafficStore.shared.flushPending() }
         }
     }
 
-    // MARK: - Alert
+    // MARK: - Helpers
+
+    private func activeKeysFrom(_ records: [ProcessRecord]) -> [ProcessDelta] {
+        // 将首次快照的 record 转为 PIDDelta → 按 BundleID 聚合为 ProcessDelta
+        let pidDeltas: [PIDDelta] = records.compactMap { r in
+            guard r.bytesIn > 0 || r.bytesOut > 0 else { return nil }
+            return PIDDelta(pid: r.pid, execName: r.execName,
+                            bytesIn: r.bytesIn, bytesOut: r.bytesOut,
+                            interval: 1, isEstimated: true)
+        }
+        return ProcessAggregator.aggregateDeltas(pidDeltas)
+    }
 
     private func postAlert(rule: AlertRule, delta: ProcessDelta) {
         guard Bundle.main.bundleIdentifier != nil else { return }

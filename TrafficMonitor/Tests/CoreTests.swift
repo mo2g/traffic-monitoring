@@ -119,51 +119,36 @@ final class NettopParserTests: XCTestCase {
 /// DeltaCalculator 单元测试
 final class DeltaCalculatorTests: XCTestCase {
     func testFirstSnapshotReturnsEmpty() {
-        let snapshot = ProcessSnapshot(
-            timestamp: Date(),
-            records: [ProcessIdentifier(bundleId: nil, execName: "test"): (100, 50)],
-            rawRecords: []
-        )
-
-        let deltas = DeltaCalculator.compute(from: nil, to: snapshot, interval: 5.0)
+        let records = [ProcessRecord(pid: 100, execName: "test", bytesIn: 100, bytesOut: 50)]
+        let deltas = DeltaCalculator.compute(from: nil, to: records, interval: 5.0)
         XCTAssertTrue(deltas.isEmpty) // 首次快照无基线
     }
 
     func testNormalDelta() {
-        let ident = ProcessIdentifier(bundleId: nil, execName: "test")
-
-        let prev = ProcessSnapshot(
-            timestamp: Date(timeIntervalSinceNow: -5),
-            records: [ident: (bytesIn: 100, bytesOut: 50)],
-            rawRecords: []
-        )
-        let curr = ProcessSnapshot(
-            timestamp: Date(),
-            records: [ident: (bytesIn: 200, bytesOut: 100)],
-            rawRecords: []
-        )
+        let prev = [
+            ProcessRecord(pid: 100, execName: "test", bytesIn: 100, bytesOut: 50),
+        ]
+        let curr = [
+            ProcessRecord(pid: 100, execName: "test", bytesIn: 200, bytesOut: 100),
+        ]
 
         let deltas = DeltaCalculator.compute(from: prev, to: curr, interval: 5.0)
         XCTAssertEqual(deltas.count, 1)
         let d = deltas[0]
         XCTAssertEqual(d.bytesIn, 100)
         XCTAssertEqual(d.bytesOut, 50)
+        XCTAssertEqual(d.pid, 100)
+        XCTAssertFalse(d.isEstimated)
     }
 
     func testProcessRestartHandling() {
-        let ident = ProcessIdentifier(bundleId: nil, execName: "test")
-
-        let prev = ProcessSnapshot(
-            timestamp: Date(timeIntervalSinceNow: -5),
-            records: [ident: (bytesIn: 1_000_000, bytesOut: 500_000)],
-            rawRecords: []
-        )
-        // 进程重启，计数器归零后又涨了一些
-        let curr = ProcessSnapshot(
-            timestamp: Date(),
-            records: [ident: (bytesIn: 50_000, bytesOut: 20_000)],
-            rawRecords: []
-        )
+        let prev = [
+            ProcessRecord(pid: 100, execName: "test", bytesIn: 1_000_000, bytesOut: 500_000),
+        ]
+        // 进程重启，计数器归零后又涨了一些（同一 PID 被复用）
+        let curr = [
+            ProcessRecord(pid: 100, execName: "test", bytesIn: 50_000, bytesOut: 20_000),
+        ]
 
         let deltas = DeltaCalculator.compute(from: prev, to: curr, interval: 5.0)
         // 重启后 delta 应为保守估计（当前值 / 10）
@@ -171,5 +156,82 @@ final class DeltaCalculatorTests: XCTestCase {
         let d = deltas[0]
         XCTAssertEqual(d.bytesIn, 5_000)   // 50_000 / 10
         XCTAssertEqual(d.bytesOut, 2_000)  // 20_000 / 10
+    }
+
+    func testPidDisappearsNoDelta() {
+        // PID 101 退出了，不应该产生虚假 delta
+        let prev = [
+            ProcessRecord(pid: 100, execName: "Chrome", bytesIn: 5_000_000_000, bytesOut: 1_000_000_000),
+            ProcessRecord(pid: 101, execName: "Chrome", bytesIn: 3_000_000_000, bytesOut: 500_000_000),
+        ]
+        let curr = [
+            ProcessRecord(pid: 100, execName: "Chrome", bytesIn: 5_100_000_000, bytesOut: 1_050_000_000),
+            // PID 101 退出，无记录
+        ]
+
+        let deltas = DeltaCalculator.compute(from: prev, to: curr, interval: 2.0)
+        // 只有 PID 100 有增量，PID 101 消失不产生 delta
+        XCTAssertEqual(deltas.count, 1)
+        let d = deltas[0]
+        XCTAssertEqual(d.pid, 100)
+        XCTAssertEqual(d.bytesIn, 100_000_000) // 5.1G - 5.0G
+    }
+
+    func testNewPidUsesFullCumulative() {
+        // 真正的新 PID（不在 knownPIDs 中）：用其累计值作为增量
+        let prev: [ProcessRecord] = []
+        let curr = [
+            ProcessRecord(pid: 200, execName: "newapp", bytesIn: 500_000, bytesOut: 200_000),
+        ]
+
+        let deltas = DeltaCalculator.compute(from: prev, to: curr, interval: 2.0)
+        XCTAssertEqual(deltas.count, 1)
+        let d = deltas[0]
+        XCTAssertEqual(d.bytesIn, 500_000)
+        XCTAssertEqual(d.bytesOut, 200_000)
+        XCTAssertTrue(d.isEstimated)
+    }
+
+    func testReturningPidUsesConservativeEstimate() {
+        // PID 在 knownPIDs 中但上次快照中没有 → /3 保守估算
+        let prev: [ProcessRecord] = []
+        let curr = [
+            ProcessRecord(pid: 300, execName: "oldapp", bytesIn: 90_000_000, bytesOut: 60_000_000),
+        ]
+        let knownPIDs: Set<Int32> = [300] // 之前见过
+
+        let deltas = DeltaCalculator.compute(from: prev, to: curr, interval: 2.0, knownPIDs: knownPIDs)
+        XCTAssertEqual(deltas.count, 1)
+        let d = deltas[0]
+        // /3 保守估算：90M/3 = 30M, 60M/3 = 20M
+        XCTAssertEqual(d.bytesIn, 30_000_000)
+        XCTAssertEqual(d.bytesOut, 20_000_000)
+        XCTAssertTrue(d.isEstimated)
+    }
+
+    func testGenuinelyNewPidCappedAtLimit() {
+        // 真正的新 PID，但累计值异常大 → 被 10 MB/s * interval 上限截断
+        let prev: [ProcessRecord] = []
+        let curr = [
+            ProcessRecord(pid: 999, execName: "huge", bytesIn: 1_000_000_000, bytesOut: 0),
+        ]
+
+        let deltas = DeltaCalculator.compute(from: prev, to: curr, interval: 5.0)
+        XCTAssertEqual(deltas.count, 1)
+        // 10_000_000 * 5 = 50_000_000 上限
+        XCTAssertEqual(deltas[0].bytesIn, 50_000_000)
+        XCTAssertTrue(deltas[0].isEstimated)
+    }
+
+    func testZeroDeltaFiltered() {
+        let prev = [
+            ProcessRecord(pid: 100, execName: "idle", bytesIn: 100, bytesOut: 50),
+        ]
+        let curr = [
+            ProcessRecord(pid: 100, execName: "idle", bytesIn: 100, bytesOut: 50),
+        ]
+
+        let deltas = DeltaCalculator.compute(from: prev, to: curr, interval: 5.0)
+        XCTAssertTrue(deltas.isEmpty)
     }
 }

@@ -77,9 +77,20 @@ final class DashboardViewModel: ObservableObject {
             if let e = rateMap[k] { rateMap[k] = (rx: e.rx + d.rxRate, tx: e.tx + d.txRate) }
             else                  { rateMap[k] = (rx: d.rxRate, tx: d.txRate) }
         }
+        // 更新速率：有新 delta → 用新值；无 delta → 衰减至半（低于 1 B/s 归零）
+        let now = Date()
         for i in processes.indices {
-            if let r = rateMap[processes[i].processKey] { processes[i].rxRate = r.rx; processes[i].txRate = r.tx }
-            else { processes[i].rxRate = 0; processes[i].txRate = 0 }
+            if let r = rateMap[processes[i].processKey] {
+                processes[i].rxRate = r.rx
+                processes[i].txRate = r.tx
+                processes[i].lastActiveAt = now
+            } else if processes[i].rxRate < 1 && processes[i].txRate < 1 {
+                processes[i].rxRate = 0
+                processes[i].txRate = 0
+            } else {
+                processes[i].rxRate *= 0.5
+                processes[i].txRate *= 0.5
+            }
         }
     }
 
@@ -155,6 +166,7 @@ struct ProcessDisplayItem: Identifiable {
     var rxRate: Double = 0
     var txRate: Double = 0
     var totalBytes: Int64 { totalIn + totalOut }
+    var lastActiveAt: Date = .distantPast
 
     init(processKey: String, bundleId: String?, displayName: String,
          totalIn: Int64, totalOut: Int64, icon: String,

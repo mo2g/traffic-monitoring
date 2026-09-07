@@ -1,190 +1,232 @@
-# macOS 按应用流量监控
+# TrafficMonitor
 
-基于 `nettop` 快照差分，在 VPN/代理模式下精准统计每个应用产生的网络流量。
+**Per-application network traffic monitoring for macOS — that still works behind a VPN or proxy.**
 
-## 为什么能解决 Shadowrocket 的问题
+[![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)](https://www.apple.com/macos/)
+[![Swift](https://img.shields.io/badge/Swift-5.9-orange)](https://swift.org)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Shadowrocket 在 macOS 上以 VPN 模式（NEPacketTunnelProvider）运行，流量经过 `utun` 虚拟网卡进入隧道后，内核层面"发起进程"的信息就丢失了——从 Shadowrocket 的视角看，所有流量都像是它自己产生的。Little Snitch 也受此影响，默认过滤了 localhost/隧道流量。
+English | [简体中文](README.zh-CN.md)
 
-**`nettop` 不同。** 它的数据来自内核网络统计子系统，这个统计在流量进入 `utun` 之前就已经记录了发起连接的进程身份。因此即使 Shadowrocket 是最终出站者，`nettop` 仍能还原出"是 Chrome 在产生流量"。
+<!--
+Screenshots go here once you have them, e.g.:
+![Main window](docs/screenshots/main-window.png)
+-->
 
-核心流程图：
+## Why this exists
+
+When a proxy client such as Shadowrocket, Surge or Clash runs in VPN mode on macOS
+(`NEPacketTunnelProvider`), every packet is routed through a `utun` interface before
+leaving the machine. From that point on the originating process is no longer visible —
+to the tunnel, *all* traffic looks like its own. Most per-app traffic tools, Little
+Snitch included, lose attribution here.
+
+The kernel, however, records which process opened a connection **before** the packet
+reaches `utun`:
 
 ```
-Chrome → connect()         ← 内核在此记录: Chrome.pid 发起了连接
-       → 路由表 → utun    ← 路由到 VPN 隧道
-       → Shadowrocket       ← 代理转发，此时看不到原始进程
-       → 互联网
+Chrome → connect()          ← kernel records: this socket belongs to Chrome
+       → routing table → utun
+       → proxy client       ← proxy sees only its own egress
+       → internet
 
-nettop 在上层读取，不受下层隧道影响 ✓
+  NetworkStatistics reads at the kernel layer, above the tunnel  ✓
 ```
 
-## 文件结构
+TrafficMonitor talks to that kernel subsystem directly (the same backend `nettop` and
+Activity Monitor use), so it still reports *"Chrome downloaded 1.2 GB"* even when the
+bytes physically left through the proxy.
 
-```
-traffic-monitoring/
-├── traffic_collector.py   ← 采集守护进程（需 sudo + 保持运行）
-├── traffic_viewer.py      ← 查询 & 报表工具
-└── README.md
-```
+## Features
 
-## 快速开始
+- **Attribution that survives tunnels** — per-process, read from the kernel above `utun`
+- **Aggregation by bundle identifier** — Chrome's dozens of helper processes collapse into one row
+- **Real application icons** — resolved from the process, exactly like Activity Monitor
+- **Live rates and cumulative totals** — sortable native table, updated once per second
+- **Per-process timeline chart** — smoothed line, area or bar, over 1 h / 6 h / 24 h / 7 d
+- **Search and context menu** — filter by name; right-click to copy the bundle ID or reveal the binary in Finder
+- **Custom groups** — roll several apps into one line
+- **Threshold alerts** — by total bytes or by rate, delivered as system notifications (throttled to one per minute per rule)
+- **CSV export**
+- **Local SQLite storage** — 60-second bucketing, automatic retention cleanup
+- **Light on resources** — ~1.4% of one CPU core, no root, no kernel extension, no entitlements
 
-### 第一步：测试 nettop 是否能正常工作
+## Requirements
+
+- macOS 14.0 (Sonoma) or later
+- Swift 5.9 / Xcode 15 or later (to build)
+
+No administrator privileges are required, at build time or at run time.
+
+## Install
 
 ```bash
-# 单次快照测试（需 sudo）
-sudo python3 traffic_collector.py --oneshot
+git clone https://github.com/OWNER/REPO.git
+cd REPO
+Scripts/make-dmg.sh              # → dist/TrafficMonitor-<version>.dmg
 ```
 
-如果你能看到 Chrome、Edge 等进程及流量数据（即使为 0），说明一切正常。
-
-### 第二步：启动采集器
+Open the `.dmg` and drag the app to Applications. To skip the disk image and install
+directly:
 
 ```bash
-# 后台持续采集，每 5 秒一次快照
-sudo python3 traffic_collector.py &
-
-# 或者自定义间隔
-sudo python3 traffic_collector.py --interval 10 --db ~/traffic.db &
+Scripts/make-app.sh /Applications
 ```
 
-数据默认保存在 `~/.traffic_monitor.db`（SQLite）。
+Both build a release binary and assemble `TrafficMonitor.app` with its icon.
 
-### 第三步：查看统计
+> **Build the `.app`, don't just run the binary.** `swift build` alone produces a bare
+> executable with no bundle identifier, and `UNUserNotificationCenter` refuses to work
+> without one — threshold alerts silently do nothing. `Scripts/make-app.sh` generates a
+> proper `Info.plist` and ad-hoc signs the bundle.
+
+The app is not notarized, so on first launch macOS will block it. Either right-click →
+**Open**, or clear the quarantine flag:
 
 ```bash
-# 查看今日汇总
-python3 traffic_viewer.py --today
-
-# 查看最近 3 小时
-python3 traffic_viewer.py --last 3h
-
-# 只看 Top 5
-python3 traffic_viewer.py --top 5 --today
-
-# 过滤特定应用
-python3 traffic_viewer.py --process Chrome --today
-
-# 查看 Chrome 的时间线
-python3 traffic_viewer.py --timeline "Chrome" --last 1h
+xattr -dr com.apple.quarantine /Applications/TrafficMonitor.app
 ```
 
-### 第四步：导出可视化报表
+The first launch also asks for **Notifications** permission; alerts need it.
+
+### Build without packaging
 
 ```bash
-# 导出为 HTML（包含 Chart.js 柱状图）
-python3 traffic_viewer.py --export html --today --output ~/Desktop/traffic.html
+swift build -c release && ./.build/release/TrafficMonitor
 ```
 
-然后用浏览器打开 HTML 文件即可看到交互式图表。
+Everything works except alerts.
 
-## 示例输出
+## Usage
 
-```
-======================================================================
-  今日流量 (2026-06-10)
-======================================================================
-进程                       下载          上传          合计       占比
-----------------------------------------------------------------------
-Chrome                   1.2G       300.5M         1.5G      52.3%
-Edge                   500.3M        50.1M       550.4M      18.8%
-Safari                 200.1M        10.2M       210.3M       7.2%
-VS Code                150.0M        80.0M       230.0M       7.8%
-WeChat                  80.5M        20.3M       100.8M       3.4%
-...                                                              
-----------------------------------------------------------------------
-总计                                                 2.9G
+Collection starts automatically when the window opens. The toolbar shows collector
+status and a start/stop button.
 
-数据范围: 14h32m, 23 个活跃进程
-```
+| Where | What |
+|---|---|
+| Summary cards | Aggregate download / upload rate and total traffic |
+| Table | Per-app live rates and cumulative totals — click a column header to sort, **double-click** a row for its timeline, right-click for more |
+| Search | Filter by process name (`⌘F`) |
+| Sidebar | Switch between per-app and grouped view |
+| Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
+| Settings (`⌘,`) | Sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
 
-## 技术细节
+Data lives in `~/Library/Application Support/TrafficMonitor/traffic_monitor.db`.
 
-### 采集原理
+## How it works
 
 ```
-时间线:  t0        t1        t2        t3
-         ↓         ↓         ↓         ↓
-快照:   S₀=100M  S₁=150M  S₂=180M  S₃=210M   ← Chrome 累计字节
-增量:            Δ₁=50M   Δ₂=30M   Δ₃=30M   ← 写入数据库
+NetworkStatistics.framework   ← kernel NStat subsystem, polled every 2 s
+        ↓  four fields per connection, read without CFDictionary bridging
+NStatCollector + SourceLedger ← per-connection cumulative → per-PID delta
+        ↓  AsyncStream (.bufferingNewest(1))
+TrafficPipeline (actor)       ← identity resolution, aggregation, bucketing, alerts
+        ↓  DashboardSnapshot, at most once per second, skipped when the window is hidden
+DashboardViewModel (@Observable) → SwiftUI
 ```
 
-1. 用 `nettop -l 1 -P -n -J bytes_in,bytes_out` 抓取快照
-2. 按进程名聚合（合并同名多 PID，如 Chrome 的多个子进程）
-3. 计算相邻快照差值 = 该周期内的流量增量
-4. 存入 SQLite，带时间戳
+Deltas are computed **per connection**, not per process: a connection's byte counter is
+monotonic and the kernel drops it on close, so PID reuse and process exit need no
+special handling.
 
-### 进程名规范化
+See [docs/architecture.md](docs/architecture.md) for the full design and the reasoning
+behind each decision.
 
-Chrome 和 Edge 在 macOS 上每个 tab/site 会创建独立进程（如 `Google Chrome.1234`, `Google Chrome Helper.5678`），采集器自动将它们聚合到 `Chrome` 下。类似处理也适用于 VS Code 等。
+## Performance
 
-### 处理进程重启
+Steady state is **~1.4% of one CPU core** with the window in the background and roughly
+340 live connections — down from 6.3% before a dedicated optimisation pass:
 
-如果 Chrome 在两次快照之间重启，累计计数器会归零。采集器检测到倒退后，会使用当前值作为增量（避免负数）。
+| | Before | After |
+|---|---:|---:|
+| Steady-state CPU | 6.3% | **1.4–1.7%** |
+| Main-thread active samples (20 s @ 1 ms) | 975 | 112 |
+| SQLite rows written per day | ~1.73 M | ~58 K |
 
-### 排除系统噪音
+[docs/performance.md](docs/performance.md) documents the measurement method, the
+attribution experiments and every number above, including how to reproduce them.
 
-默认跳过 `kernel_task`、`launchd`、`WindowServer` 等永远在运行但不产生实际网络流量的系统进程。
+## Privacy
 
-## 开机自启动（可选）
+Everything stays on your machine. Traffic counters are read from the local kernel and
+written to a local SQLite file. The app makes no network requests of its own, contains
+no analytics, and never transmits anything anywhere.
 
-创建 LaunchAgent 让采集器开机自启：
+Recorded per app: display name, bundle identifier, byte counts, timestamps. **Not**
+recorded: hostnames, IP addresses, ports, or any packet contents.
+
+## Limitations
+
+| Limitation | Detail |
+|---|---|
+| **Private API** | `NetworkStatistics.framework` is undocumented. This app therefore **cannot ship on the Mac App Store**, and a major macOS release could change or remove the symbols it relies on. Verified working on macOS 14.4. |
+| **Loopback traffic is double counted** | When a process connects to itself over `127.0.0.1`, it is both endpoints, so the kernel records the payload once as sent and once as received. Measured: transferring 10 MiB yields rx = 10 MiB *and* tx = 10 MiB, making the "total" column 2× the real payload. Traffic to the internet is unaffected. |
+| **Very short connections** | A connection opened and closed between two samples is dropped along with its source. |
+| **Fixed 24-hour window** | The sidebar's Today / Week / Month selector currently only changes labels; the statistics window is hard-coded to the last 24 hours. |
+
+## Roadmap
+
+Known gaps, roughly in order of usefulness:
+
+- Make the Today / Week / Month selector actually re-query the database
+- Wire up the "excluded processes" field in Settings (currently inert)
+- Launch at login
+- Menu-bar mode with live rates
+- Notarized, signed releases (builds are currently ad-hoc signed only)
+
+## Project layout
+
+```
+├── Package.swift
+├── Sources/
+│   ├── App/            Application entry point
+│   ├── Core/
+│   │   ├── Collector/  Kernel interface, delta ledger, service lifecycle
+│   │   ├── TrafficPipeline.swift   All per-frame computation (actor)
+│   │   └── DataStore.swift         SQLite via GRDB (actor)
+│   ├── Models/         Value types crossing concurrency domains
+│   ├── Utilities/      Constants, identity resolver, formatting, logging
+│   ├── ViewModels/
+│   └── Views/
+├── Tests/
+├── Resources/
+│   └── AppIcon.icns    Generated by Scripts/make-icon.swift
+├── Scripts/
+│   ├── build.sh        Resolve, build, test
+│   ├── make-app.sh     Assemble TrafficMonitor.app
+│   ├── make-dmg.sh     Assemble a distributable .dmg
+│   └── make-icon.swift Regenerate the app icon
+└── docs/
+    ├── architecture.md
+    ├── performance.md
+    └── research/       Phase-0 feasibility study (historical)
+```
+
+## Development
 
 ```bash
-# 创建 plist
-cat > ~/Library/LaunchAgents/com.traffic.collector.plist << 'EOF'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.traffic.collector</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/sudo</string>
-        <string>/usr/bin/python3</string>
-        <string>/Volumes/dev/web/mo2g/traffic-monitoring/traffic_collector.py</string>
-        <string>--interval</string>
-        <string>10</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <true/>
-    <key>StandardOutPath</key>
-    <string>/tmp/traffic_collector.log</string>
-    <key>StandardErrorPath</key>
-    <string>/tmp/traffic_collector.err</string>
-</dict>
-</plist>
-EOF
-
-# 加载
-launchctl load ~/Library/LaunchAgents/com.traffic.collector.plist
+Scripts/build.sh     # resolve + build (release) + test
+swift test           # tests only
 ```
 
-**注意**：如果使用 LaunchAgent，需要在 `/etc/sudoers` 中配置 `nopasswd`，否则 sudo 会卡住。更推荐的方式是用 cron 或手动运行：
+97 tests cover the delta ledger, the pipeline (aggregation, rate reset, UI throttling,
+visibility gating), models, formatting, chart bucketing, the icon cache, the stores and
+SQLite round-trips. The
+`NStatCollector` integration tests talk to the real kernel interface and skip
+themselves when the machine has no network activity.
 
-```bash
-# crontab（每10分钟检查一次，确保一直在跑）
-*/10 * * * * pgrep -f traffic_collector.py || sudo python3 /path/to/traffic_collector.py --interval 10 &
-```
+CI runs build, test and `.dmg` packaging on `macos-14` for every push and pull request,
+and uploads the disk image as a build artifact.
 
-## 局限性与注意事项
+`Constants.swift` is the single source of truth for the version and bundle identifier —
+`make-app.sh` reads both out of it when generating `Info.plist`.
 
-| 局限 | 说明 | 影响 |
-|------|------|------|
-| nettop 粒度 | 5 秒间隔内的小流量请求可能被合并 | 轻微——总体统计准确 |
-| UDP 流量 | nettop 默认只看 TCP，UDP 需 `-m udp` | QUIC/HTTP3 流量可能遗漏 |
-| 短连接 | 两次快照之间建立又断开的连接不可见 | 对总量影响小 |
-| 快照时差 | 快照时刻的瞬间偏差 | 可忽略——统计级别 |
-| 需 sudo | nettop 需要 root 权限 | 安全性考量 |
+The package uses SwiftPM's flat single-target layout: sources sit directly in `Sources/`
+and tests in `Tests/`, with no `path:` in the manifest. This is the shape
+`swift package init --type executable` generates and is only valid while each of those
+directories holds exactly one target — adding a second one requires moving sources under
+`Sources/<TargetName>/`.
 
-## 扩展方向
+## License
 
-- 增加 UDP 支持：在 `take_snapshot()` 中添加 `-m udp` 的第二次采集
-- 实时 Web 仪表板：用 Flask + WebSocket 推送实时数据
-- 告警：某个应用超出预设流量阈值时通知
-- 与 Shadowrocket 统计关联：对比两套数据验证一致性
+[MIT](LICENSE)

@@ -9,7 +9,7 @@
 
 English | [简体中文](README.zh-CN.md)
 
-<img src="docs/screenshots/main-window.png" width="900" alt="Main window — per-app traffic with live rates and real application icons">
+<img src="docs/screenshots/main-window-en.png" width="900" alt="Main window — per-app traffic with live rates and real application icons">
 
 <details>
 <summary>Per-process timeline</summary>
@@ -49,6 +49,7 @@ bytes physically left through the proxy.
 - **Attribution that survives tunnels** — per-process, read from the kernel above `utun`
 - **Aggregation by bundle identifier** — Chrome's dozens of helper processes collapse into one row
 - **Menu bar mode** — live up/down rates in the menu bar, with a panel listing the busiest apps
+- **English and Simplified Chinese** — follows the system language, or pick one in Settings
 - **Real application icons** — resolved from the process, exactly like Activity Monitor
 - **Live rates and cumulative totals** — sortable native table, updated once per second
 - **Per-process timeline chart** — smoothed line, area or bar, over 1 h / 6 h / 24 h / 7 d
@@ -127,7 +128,7 @@ status and a start/stop button.
 | Sidebar | Time range (today / this week / this month) and per-app vs grouped view |
 | Menu bar | Live rates; click for the busiest apps and quick actions |
 | Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
-| Settings (`⌘,`) | Sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
+| Settings (`⌘,`) | Language, sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
 
 Data lives in `~/Library/Application Support/TrafficMonitor/traffic_monitor.db`.
 
@@ -189,7 +190,6 @@ Known gaps, roughly in order of usefulness:
 - Notarized, signed releases (builds are currently ad-hoc signed only)
 - Per-app traffic quotas rather than one-shot alerts
 - Export the timeline chart as an image
-- Localized UI (currently Simplified Chinese only)
 
 ## Project layout
 
@@ -226,9 +226,10 @@ Scripts/build.sh     # resolve + build (release) + test
 swift test           # tests only
 ```
 
-97 tests cover the delta ledger, the pipeline (aggregation, rate reset, UI throttling,
-visibility gating), models, formatting, chart bucketing, the icon cache, the stores and
-SQLite round-trips. The
+129 tests cover the delta ledger, the pipeline (aggregation, rate reset, UI throttling,
+visibility gating, time-range reload, process exclusion), models, formatting, chart
+bucketing, the icon cache, the stores, SQLite round-trips, and the string tables —
+including a check that every `L("…")` key used in the source exists in both languages. The
 `NStatCollector` integration tests talk to the real kernel interface and skip
 themselves when the machine has no network activity.
 
@@ -237,6 +238,11 @@ and uploads the disk image as a build artifact.
 
 `Constants.swift` is the single source of truth for the version and bundle identifier —
 `make-app.sh` reads both out of it when generating `Info.plist`.
+
+Localized strings live in `Sources/Resources/<lang>.lproj/Localizable.strings`. They are
+declared with `.copy` rather than `.process` on purpose: `.process` lowercases
+`zh-Hans.lproj` to `zh-hans.lproj`, after which the locale never matches at runtime and
+everything silently falls back to English.
 
 The package uses SwiftPM's flat single-target layout: sources sit directly in `Sources/`
 and tests in `Tests/`, with no `path:` in the manifest. This is the shape

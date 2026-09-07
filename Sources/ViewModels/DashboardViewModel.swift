@@ -54,9 +54,18 @@ final class DashboardViewModel {
     @ObservationIgnored private var latest = DashboardSnapshot()
 
     enum TimeRange: String, CaseIterable, Identifiable {
-        case today = "今日", week = "本周", month = "本月"
+        // rawValue 是持久化标识，必须与界面语言无关；展示名走 `displayName`
+        case today, week, month
 
         var id: String { rawValue }
+
+        var displayName: String {
+            switch self {
+            case .today: L("range.today")
+            case .week:  L("range.week")
+            case .month: L("range.month")
+            }
+        }
 
         /// 窗口起点。用日历边界而不是「往前推 N 秒」——
         /// 标签写着「今日」，用户期望的是今天零点起算，不是过去 24 小时。
@@ -135,7 +144,8 @@ final class DashboardViewModel {
                 count += 1
                 accounted.insert(r.key)
             }
-            items.append(GroupRow(id: g.id, name: g.name, totalIn: totalIn, totalOut: totalOut,
+            items.append(GroupRow(id: g.id, name: g.name, isOthers: false,
+                                  totalIn: totalIn, totalOut: totalOut,
                                   rxRate: rx, txRate: tx, memberCount: count))
         }
 
@@ -143,7 +153,8 @@ final class DashboardViewModel {
         if !others.isEmpty {
             items.append(GroupRow(
                 id: Self.othersGroupID,
-                name: "其他",
+                name: L("group.others"),
+                isOthers: true,
                 totalIn: others.reduce(0) { $0 + $1.totalIn },
                 totalOut: others.reduce(0) { $0 + $1.totalOut },
                 rxRate: others.reduce(0) { $0 + $1.rxRate },

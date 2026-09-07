@@ -31,6 +31,15 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/TrafficMonitor "$APP/Contents/MacOS/TrafficMonitor"
 
+# 本地化资源包：SwiftPM 把 .lproj 打进 TrafficMonitor_TrafficMonitor.bundle，
+# 必须放在可执行文件**旁边** —— Bundle.module 就是这么定位的。
+BUNDLE=".build/release/TrafficMonitor_TrafficMonitor.bundle"
+if [[ -d "$BUNDLE" ]]; then
+    cp -R "$BUNDLE" "$APP/Contents/MacOS/"
+else
+    echo "  ⚠️  $BUNDLE 缺失，界面将只有英文兜底"
+fi
+
 # 图标：产物已提交在 Resources/，改图标用 Scripts/make-icon.swift 重新生成
 ICON_KEY=""
 if [[ -f Resources/AppIcon.icns ]]; then
@@ -45,7 +54,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <key>CFBundleDevelopmentRegion</key>            <string>zh_CN</string>
+    <key>CFBundleDevelopmentRegion</key>            <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>zh-Hans</string>
+    </array>
     <key>CFBundleExecutable</key>                   <string>TrafficMonitor</string>
     <key>CFBundleIdentifier</key>                   <string>$BUNDLE_ID</string>
 $ICON_KEY

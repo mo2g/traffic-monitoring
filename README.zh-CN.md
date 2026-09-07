@@ -46,6 +46,7 @@ TrafficMonitor 直接对接这个内核子系统（`nettop` 和「活动监视�
 - **穿透隧道的归因** —— 按进程统计，在 `utun` 之上从内核读取
 - **按 Bundle ID 聚合** —— Chrome 的几十个 helper 子进程合并成一行
 - **菜单栏模式** —— 菜单栏常驻显示上下行速率，点开可看最活跃的应用
+- **中英双语** —— 跟随系统语言，也可在设置里指定
 - **真实应用图标** —— 从进程解析，与活动监视器一致
 - **实时速率 + 累计流量** —— 原生表格，可点列头排序，每秒刷新
 - **单进程时间线图表** —— 平滑曲线 / 面积 / 柱状三种样式，跨度 1 小时 / 6 小时 / 24 小时 / 7 天
@@ -121,7 +122,7 @@ swift build -c release && ./.build/release/TrafficMonitor
 | 侧栏 | 统计窗口（今日 / 本周 / 本月）、按应用或按分组查看 |
 | 菜单栏 | 实时速率；点开可看最活跃的应用和快捷操作 |
 | 时间线窗口 | 切换图表样式（曲线 / 面积 / 柱状）和时间跨度，两者都会被记住 |
-| 设置（`⌘,`） | 采集间隔、落库间隔、数据库大小与清理、分组、告警规则、调试日志 |
+| 设置（`⌘,`） | 界面语言、采集间隔、落库间隔、数据库大小与清理、分组、告警规则、调试日志 |
 
 数据保存在 `~/Library/Application Support/TrafficMonitor/traffic_monitor.db`。
 
@@ -179,7 +180,6 @@ DashboardViewModel (@Observable) → SwiftUI
 - 签名与公证的正式发布（目前只做 ad-hoc 签名）
 - 按应用设置流量配额，而不只是一次性告警
 - 时间线图表导出为图片
-- 界面多语言（目前只有简体中文）
 
 ## 目录结构
 
@@ -216,8 +216,9 @@ Scripts/build.sh     # 解析依赖 + 编译 release + 测试
 swift test           # 只跑测试
 ```
 
-97 个测试覆盖差值台账、管线（聚合、速率归零、UI 节流、可见性闸门）、模型、格式化、
-图表分桶、图标缓存、偏好存储和 SQLite 读写往返。`NStatCollector` 的集成测试直连真实内核接口，
+129 个测试覆盖差值台账、管线（聚合、速率归零、UI 节流、可见性闸门、时间窗口重载、
+进程排除）、模型、格式化、图表分桶、图标缓存、偏好存储、SQLite 读写往返，以及字符串表 ——
+包括校验源码里每个 `L("…")` 用到的键在两种语言下都存在。`NStatCollector` 的集成测试直连真实内核接口，
 机器无网络活动时会自动跳过。
 
 CI 在 `macos-14` 上对每次 push 和 PR 执行编译、测试和 `.dmg` 打包，并把磁盘映像
@@ -225,6 +226,10 @@ CI 在 `macos-14` 上对每次 push 和 PR 执行编译、测试和 `.dmg` 打�
 
 `Constants.swift` 是版本号和 Bundle ID 的唯一真源 —— `make-app.sh` 生成 `Info.plist`
 时从那里读取。
+
+本地化字符串在 `Sources/Resources/<语言>.lproj/Localizable.strings`。资源刻意用
+`.copy` 而非 `.process` 声明：`.process` 会把 `zh-Hans.lproj` 小写成 `zh-hans.lproj`，
+之后运行时再也匹配不上该语言，会静默回落到英文。
 
 包采用 SwiftPM 的单目标扁平布局：源码直接放在 `Sources/`、测试直接放在 `Tests/`，
 清单里不写 `path:`。这正是 `swift package init --type executable` 生成的形态，

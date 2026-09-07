@@ -4,6 +4,42 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-09-07
+
+### Added
+
+- **中英双语界面**。跟随系统语言，也可在「设置 › 通用 › 界面语言」里指定，
+  切换后立即生效（App 层用 `.id(language)` 强制重建视图树）。
+  共 132 条字符串，两种语言键集完全对齐。
+
+  三个实测坑，都写进了代码注释：
+  - SwiftPM 可执行目标的资源会被打进独立的
+    `TrafficMonitor_TrafficMonitor.bundle`，而 SwiftUI 的
+    `Text(LocalizedStringKey)` 默认查 `Bundle.main` —— 在这里永远查不到。
+    因此走自建的 `L()` 查表。
+  - 资源必须用 `.copy` 而非 `.process` 声明：`.process` 会把 `zh-Hans.lproj`
+    **小写**成 `zh-hans.lproj`，之后 `Bundle.preferredLocalizations` 再也匹配不上，
+    永远回落英文。
+  - 语言匹配也自己做，不依赖 `preferredLocalizations`。
+- `make-app.sh` 把本地化资源包复制到可执行文件旁（`Bundle.module` 的定位方式），
+  并在 `Info.plist` 声明 `CFBundleLocalizations`。
+- README 补上英文界面截图。
+
+### Changed
+
+- **菜单栏速率改为上行在上、下行在下**，与箭头方向直觉一致。
+- 日志改为英文输出（诊断信息惯例），界面文案全部走本地化。
+- `TimeRange` 与 `ChartStyle` 的 `rawValue` 改为语言无关的 ASCII 标识
+  （`today`/`week`/`month`、`line`/`area`/`bar`），避免持久化内容依赖界面语言。
+- `GroupRow` 新增 `isOthers` 字段。此前靠 `name == "其他"` 判断兜底分组，
+  本地化之后这种比较必然失效。
+
+### Tests
+
+129 个（+11）。新增的字符串表校验会卡住三类问题：两种语言键集不一致、
+占位符数量不匹配、源码里 `L("…")` 用到了表中不存在的键。
+这三条都用注入缺陷的方式验证过确实会失败。
+
 ## [0.5.1] — 2026-09-07
 
 ### Fixed

@@ -27,6 +27,9 @@ struct ProcessRow: Identifiable, Equatable {
 struct GroupRow: Identifiable, Equatable {
     let id: UUID
     let name: String
+    /// 是否为「其他」这一兜底分组。
+    /// 此前靠 `name == "其他"` 判断，本地化之后这种比较必然失效。
+    let isOthers: Bool
     let totalIn: Int64
     let totalOut: Int64
     let rxRate: Double

@@ -58,13 +58,13 @@ struct MainWindowView: View {
 
             if collector.status == .running {
                 Button { collector.stop() } label: {
-                    Label("停止", systemImage: "stop.fill")
-                }.help("停止采集")
+                    Label(L("toolbar.stop"), systemImage: "stop.fill")
+                }.help(L("toolbar.stop.help"))
             } else {
                 Button { Task { await collector.start() } } label: {
-                    Label("启动", systemImage: "play.fill")
+                    Label(L("toolbar.start"), systemImage: "play.fill")
                 }
-                .help("启动采集")
+                .help(L("toolbar.start.help"))
                 .keyboardShortcut(.return, modifiers: [])
             }
 
@@ -73,8 +73,8 @@ struct MainWindowView: View {
             searchField
 
             Button { exportDocument = CSVDocument(rows: dashboard.rows) } label: {
-                Label("导出", systemImage: "square.and.arrow.up")
-            }.help("导出 CSV")
+                Label(L("toolbar.export"), systemImage: "square.and.arrow.up")
+            }.help(L("toolbar.export.help"))
         }
     }
 
@@ -89,7 +89,7 @@ struct MainWindowView: View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11)).foregroundStyle(.secondary)
-            TextField("搜索进程", text: Bindable(dashboard).searchText)
+            TextField(L("toolbar.search"), text: Bindable(dashboard).searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
                 .frame(width: 130)
@@ -116,9 +116,9 @@ struct MainWindowView: View {
 
     private var statusLabel: String {
         switch collector.status {
-        case .idle: "就绪"
-        case .running: "采集中"
-        case .stopped: "已停止"
+        case .idle: L("toolbar.status.idle")
+        case .running: L("toolbar.status.running")
+        case .stopped: L("toolbar.status.stopped")
         case .error(let msg): msg
         }
     }
@@ -148,22 +148,22 @@ private struct SidebarView: View {
         // 扁平 List 走的是 NSTableView，没有 expandItem: 这一步，警告消失，
         // 同时完整保留原生侧栏的材质、行距与滚动行为。
         List {
-            sectionHeader("时间范围")
+            sectionHeader(L("sidebar.timeRange"))
             ForEach(DashboardViewModel.TimeRange.allCases) { range in
-                Label(range.rawValue, systemImage: icon(for: range))
+                Label(range.displayName, systemImage: icon(for: range))
                     .foregroundColor(dashboard.selectedTimeRange == range ? .accentColor : .primary)
                     .contentShape(Rectangle())
                     .onTapGesture { dashboard.selectedTimeRange = range }
             }
 
-            sectionHeader("视图")
-            Toggle("按分组查看", isOn: $dashboard.isGroupedView)
+            sectionHeader(L("sidebar.view"))
+            Toggle(L("sidebar.groupedView"), isOn: $dashboard.isGroupedView)
                 .disabled(dashboard.processGroups.isEmpty)
         }
         .safeAreaInset(edge: .bottom) {
             HStack {
                 Image(systemName: "calendar")
-                Text("范围: \(dashboard.selectedTimeRange.rawValue)")
+                Text(L("sidebar.currentRange", dashboard.selectedTimeRange.displayName))
             }
             .font(.caption).foregroundColor(.secondary).padding(8)
         }
@@ -196,13 +196,13 @@ private struct SummaryRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            SummaryCard(title: "下载速率",
+            SummaryCard(title: L("summary.downloadRate"),
                         value: ByteFormatter.rateString(bytesPerSecond: dashboard.totalRxRate),
                         icon: "arrow.down")
-            SummaryCard(title: "上传速率",
+            SummaryCard(title: L("summary.uploadRate"),
                         value: ByteFormatter.rateString(bytesPerSecond: dashboard.totalTxRate),
                         icon: "arrow.up")
-            SummaryCard(title: "\(dashboard.selectedTimeRange.rawValue)流量",
+            SummaryCard(title: L("summary.rangeTraffic", dashboard.selectedTimeRange.displayName),
                         value: ByteFormatter.string(bytes: dashboard.totalTraffic),
                         icon: "chart.bar")
         }
@@ -256,7 +256,7 @@ private struct ProcessTableView: View {
             EmptyStateView()
         } else {
             Table(dashboard.rows, selection: $selection, sortOrder: $dashboard.sortOrder) {
-                TableColumn("进程", value: \.displayName) { row in
+                TableColumn(L("column.process"), value: \.displayName) { row in
                     HStack(spacing: 6) {
                         ProcessIcon(row: row)
                         Text(row.displayName).lineLimit(1)
@@ -264,7 +264,7 @@ private struct ProcessTableView: View {
                 }
                 .width(min: 140)
 
-                TableColumn("实时下载", value: \.rxRate) { row in
+                TableColumn(L("column.liveDownload"), value: \.rxRate) { row in
                     Text(ByteFormatter.rateString(bytesPerSecond: row.rxRate))
                         .font(.system(size: 12))
                         .foregroundColor(row.rxRate > 0 ? .blue : .secondary)
@@ -272,7 +272,7 @@ private struct ProcessTableView: View {
                 }
                 .width(min: 85)
 
-                TableColumn("实时上传", value: \.txRate) { row in
+                TableColumn(L("column.liveUpload"), value: \.txRate) { row in
                     Text(ByteFormatter.rateString(bytesPerSecond: row.txRate))
                         .font(.system(size: 12))
                         .foregroundColor(row.txRate > 0 ? .red : .secondary)
@@ -280,25 +280,25 @@ private struct ProcessTableView: View {
                 }
                 .width(min: 85)
 
-                TableColumn("下载", value: \.totalIn) { row in
+                TableColumn(L("column.download"), value: \.totalIn) { row in
                     Text(ByteFormatter.string(bytes: row.totalIn))
                         .foregroundColor(.blue).monospacedDigit()
                 }
                 .width(min: 75)
 
-                TableColumn("上传", value: \.totalOut) { row in
+                TableColumn(L("column.upload"), value: \.totalOut) { row in
                     Text(ByteFormatter.string(bytes: row.totalOut))
                         .foregroundColor(.red).monospacedDigit()
                 }
                 .width(min: 75)
 
-                TableColumn("合计", value: \.totalBytes) { row in
+                TableColumn(L("column.total"), value: \.totalBytes) { row in
                     Text(ByteFormatter.string(bytes: row.totalBytes))
                         .fontWeight(.medium).monospacedDigit()
                 }
                 .width(min: 90)
 
-                TableColumn(collector.sparklineEnabled ? "趋势" : "") { row in
+                TableColumn(collector.sparklineEnabled ? L("column.trend") : "") { row in
                     if collector.sparklineEnabled {
                         Sparkline(values: row.spark)
                     }
@@ -322,15 +322,15 @@ private struct ProcessTableView: View {
 
     @ViewBuilder
     private func menu(for row: ProcessRow) -> some View {
-        Button("查看时间线") { onOpenDetail(row) }
+        Button(L("menu.viewTimeline")) { onOpenDetail(row) }
         Divider()
-        Button("复制名称") { copy(row.displayName) }
+        Button(L("menu.copyName")) { copy(row.displayName) }
         if let bundleId = row.bundleId {
-            Button("复制 Bundle ID") { copy(bundleId) }
+            Button(L("menu.copyBundleID")) { copy(bundleId) }
         }
         if let path = row.iconPath, FileManager.default.fileExists(atPath: path) {
             Divider()
-            Button("在访达中显示") {
+            Button(L("menu.revealInFinder")) {
                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
             }
         }
@@ -353,39 +353,39 @@ private struct GroupTableView: View {
             EmptyStateView()
         } else {
             Table(dashboard.groupRows) {
-                TableColumn("分组") { row in
+                TableColumn(L("column.group")) { row in
                     HStack(spacing: 6) {
-                        Image(systemName: row.name == "其他" ? "tray" : "folder")
+                        Image(systemName: row.isOthers ? "tray" : "folder")
                             .frame(width: 18).foregroundColor(.accentColor)
                         Text(row.name).lineLimit(1)
                     }
                 }.width(min: 140)
 
-                TableColumn("实时下载") { row in
+                TableColumn(L("column.liveDownload")) { row in
                     Text(ByteFormatter.rateString(bytesPerSecond: row.rxRate))
                         .font(.system(size: 12))
                         .foregroundColor(row.rxRate > 0 ? .blue : .secondary).monospacedDigit()
                 }.width(min: 85)
 
-                TableColumn("实时上传") { row in
+                TableColumn(L("column.liveUpload")) { row in
                     Text(ByteFormatter.rateString(bytesPerSecond: row.txRate))
                         .font(.system(size: 12))
                         .foregroundColor(row.txRate > 0 ? .red : .secondary).monospacedDigit()
                 }.width(min: 85)
 
-                TableColumn("下载") { row in
+                TableColumn(L("column.download")) { row in
                     Text(ByteFormatter.string(bytes: row.totalIn)).foregroundColor(.blue).monospacedDigit()
                 }.width(min: 75)
 
-                TableColumn("上传") { row in
+                TableColumn(L("column.upload")) { row in
                     Text(ByteFormatter.string(bytes: row.totalOut)).foregroundColor(.red).monospacedDigit()
                 }.width(min: 75)
 
-                TableColumn("合计") { row in
+                TableColumn(L("column.total")) { row in
                     Text(ByteFormatter.string(bytes: row.totalBytes)).fontWeight(.medium).monospacedDigit()
                 }.width(min: 75)
 
-                TableColumn("进程数") { row in
+                TableColumn(L("column.memberCount")) { row in
                     Text("\(row.memberCount)").monospacedDigit()
                 }.width(min: 50)
             }
@@ -404,10 +404,10 @@ private struct EmptyStateView: View {
             Spacer()
             if collector.status == .running {
                 Image(systemName: "network").font(.system(size: 36)).foregroundColor(.secondary)
-                Text("等待网络活动...").foregroundColor(.secondary)
+                Text(L("empty.waiting")).foregroundColor(.secondary)
             } else {
                 Image(systemName: "play.circle").font(.system(size: 36)).foregroundColor(.accentColor)
-                Text("按 ⏎ 启动采集").foregroundColor(.secondary)
+                Text(L("empty.pressToStart")).foregroundColor(.secondary)
                 if case .error(let msg) = collector.status {
                     Text(msg).font(.caption).foregroundColor(.red).padding(.top, 4)
                 }
@@ -425,7 +425,7 @@ struct CSVDocument: FileDocument {
     let csv: String
 
     init(rows: [ProcessRow]) {
-        var lines = ["进程,实时下载(B/s),实时上传(B/s),下载(B),上传(B),合计(B)"]
+        var lines = [L("csv.header")]
         for r in rows {
             lines.append("\"\(r.displayName)\",\(Int(r.rxRate)),\(Int(r.txRate)),\(r.totalIn),\(r.totalOut),\(r.totalBytes)")
         }

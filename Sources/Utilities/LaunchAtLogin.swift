@@ -30,7 +30,7 @@ enum LaunchAtLogin {
     @discardableResult
     static func setEnabled(_ enabled: Bool) -> String? {
         guard isSupported else {
-            return "需要以 TrafficMonitor.app 的形式运行（见 Scripts/make-app.sh）"
+            return L("launch.needsAppBundle")
         }
         do {
             if enabled {
@@ -52,8 +52,8 @@ enum LaunchAtLogin {
     /// 说明当前状态的一句话，直接展示在设置里
     static var statusDescription: String? {
         guard isSupported else {
-            return "以裸可执行文件运行时不可用，请用 Scripts/make-app.sh 打包"
+            return L("launch.notBundled")
         }
-        return requiresApproval ? "已被系统设置阻止，需要在「登录项」中手动允许" : nil
+        return requiresApproval ? L("launch.requiresApproval") : nil
     }
 }

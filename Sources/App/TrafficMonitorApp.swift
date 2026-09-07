@@ -18,6 +18,7 @@ struct TrafficMonitorApp: App {
                 .environment(collectorService)
                 .environment(dashboardVM)
                 .frame(minWidth: 940, idealWidth: 1080, minHeight: 520, idealHeight: 680)
+                .id(collectorService.language)   // 切换语言时重建视图树
                 .onAppear {
                     if Bundle.main.bundleIdentifier != nil {
                         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -61,6 +62,7 @@ struct TrafficMonitorApp: App {
             SettingsView()
                 .environment(collectorService)
                 .environment(dashboardVM)
+                .id(collectorService.language)
         }
     }
 }

@@ -318,7 +318,7 @@ actor TrafficPipeline {
         do {
             try await DataStore.shared.insertEvents(events)
         } catch {
-            await LogStore.shared.log("批量写入 DB 失败: \(error)", level: .error, tag: "Pipeline")
+            await LogStore.shared.log("Batch insert failed: \(error)", level: .error, tag: "Pipeline")
             return  // 桶保留，下次重试
         }
 
@@ -367,13 +367,16 @@ actor TrafficPipeline {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let body: String
         if let tb = rule.thresholdBytes {
-            body = "\(delta.identifier.displayName) 流量 \(ByteFormatter.string(bytes: delta.totalBytes)) 超过 \(ByteFormatter.string(bytes: tb))"
+            body = L("alerts.notification.bytes", delta.identifier.displayName,
+                     ByteFormatter.string(bytes: delta.totalBytes), ByteFormatter.string(bytes: tb))
         } else if let tr = rule.thresholdRate {
-            body = "\(delta.identifier.displayName) 速率 \(ByteFormatter.rateString(bytesPerSecond: delta.totalRate)) 超过 \(ByteFormatter.rateString(bytesPerSecond: tr))"
+            body = L("alerts.notification.rate", delta.identifier.displayName,
+                     ByteFormatter.rateString(bytesPerSecond: delta.totalRate),
+                     ByteFormatter.rateString(bytesPerSecond: tr))
         } else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = "TrafficMonitor 告警"
+        content.title = L("alerts.notification.title")
         content.body = body
         content.sound = .default
         UNUserNotificationCenter.current().add(

@@ -8,7 +8,7 @@ struct SettingsView: View {
 
     @State private var selectedInterval: TimeInterval = Preferences.interval
     @State private var selectedSaveInterval: TimeInterval = Preferences.saveInterval
-    @State private var dbSize: String = "计算中..."
+    @State private var dbSize: String = L("settings.calculating")
     @State private var retentionDays: Double = 30
     @State private var retentionEnabled: Bool = false
     @State private var excludedProcesses: String = Preferences.excludedProcessesText
@@ -25,12 +25,12 @@ struct SettingsView: View {
             // 采集设置
             Form {
                 Section {
-                    LabeledContent("采集间隔") {
+                    LabeledContent(L("settings.interval")) {
                         Picker("", selection: $selectedInterval) {
-                            Text("1 秒").tag(1.0)
-                            Text("2 秒").tag(2.0)
-                            Text("5 秒").tag(5.0)
-                            Text("10 秒").tag(10.0)
+                            Text(L("settings.seconds", 1)).tag(1.0)
+                            Text(L("settings.seconds", 2)).tag(2.0)
+                            Text(L("settings.seconds", 5)).tag(5.0)
+                            Text(L("settings.seconds", 10)).tag(10.0)
                         }
                         .pickerStyle(.segmented)
                         .frame(width: 220)
@@ -42,12 +42,12 @@ struct SettingsView: View {
                         }
                     }
 
-                    LabeledContent("保存间隔") {
+                    LabeledContent(L("settings.saveInterval")) {
                         Picker("", selection: $selectedSaveInterval) {
-                            Text("10 秒").tag(10.0)
-                            Text("15 秒").tag(15.0)
-                            Text("30 秒").tag(30.0)
-                            Text("60 秒").tag(60.0)
+                            Text(L("settings.seconds", 10)).tag(10.0)
+                            Text(L("settings.seconds", 15)).tag(15.0)
+                            Text(L("settings.seconds", 30)).tag(30.0)
+                            Text(L("settings.seconds", 60)).tag(60.0)
                         }
                         .pickerStyle(.segmented)
                         .frame(width: 220)
@@ -59,17 +59,26 @@ struct SettingsView: View {
                         }
                     }
 
-                    LabeledContent("菜单栏显示速率") {
+                    LabeledContent(L("settings.language")) {
+                        Picker("", selection: Bindable(collectorService).language) {
+                            ForEach(AppLanguage.allCases) { lang in
+                                Text(lang.displayName).tag(lang)
+                            }
+                        }
+                        .labelsHidden().frame(width: 220)
+                    }
+
+                    LabeledContent(L("settings.menuBar")) {
                         Toggle("", isOn: Bindable(collectorService).menuBarEnabled)
-                            .help("在菜单栏常驻显示实时上下行速率")
+                            .help(L("settings.menuBar.help"))
                     }
 
-                    LabeledContent("行内趋势图") {
+                    LabeledContent(L("settings.sparkline")) {
                         Toggle("", isOn: Bindable(collectorService).sparklineEnabled)
-                            .help("在表格里为每个进程显示最近速率的迷你曲线")
+                            .help(L("settings.sparkline.help"))
                     }
 
-                    LabeledContent("开机启动") {
+                    LabeledContent(L("settings.launchAtLogin")) {
                         Toggle("", isOn: $launchAtLogin)
                             .disabled(!LaunchAtLogin.isSupported)
                             .onChange(of: launchAtLogin) { _, want in
@@ -83,95 +92,95 @@ struct SettingsView: View {
                         HStack(spacing: 6) {
                             Text(hint).font(.caption).foregroundStyle(.secondary)
                             if LaunchAtLogin.requiresApproval {
-                                Button("打开登录项设置") { LaunchAtLogin.openLoginItemsSettings() }
+                                Button(L("settings.openLoginItems")) { LaunchAtLogin.openLoginItemsSettings() }
                                     .buttonStyle(.link).font(.caption)
                             }
                         }
                     }
                 } header: {
-                    Text("采集设置")
+                    Text(L("settings.section.collection"))
                 }
 
                 Section {
-                    LabeledContent("数据库大小") {
+                    LabeledContent(L("settings.dbSize")) {
                         Text(dbSize)
                     }
                     .onAppear { updateDBSize() }
 
-                    LabeledContent("自动清理") {
+                    LabeledContent(L("settings.autoCleanup")) {
                         Toggle("", isOn: $retentionEnabled)
                     }
 
                     if retentionEnabled {
-                        LabeledContent("保留天数") {
+                        LabeledContent(L("settings.retentionDays")) {
                             HStack {
-                                Text("\(Int(retentionDays)) 天")
+                                Text(L("settings.days", Int(retentionDays)))
                                     .monospacedDigit()
                                 Stepper("", value: $retentionDays, in: 7...90, step: 1)
                                     .labelsHidden()
                             }
                         }
 
-                        Button("立即清理") {
+                        Button(L("settings.cleanNow")) {
                             deleteOldData()
                             updateDBSize()
                         }
                     }
 
                 } header: {
-                    Text("数据管理")
+                    Text(L("settings.section.data"))
                 }
 
                 Section {
-                    LabeledContent("排除进程") {
-                        TextField("用逗号分隔，回车生效", text: $excludedProcesses)
+                    LabeledContent(L("settings.excluded")) {
+                        TextField(L("settings.excluded.placeholder"), text: $excludedProcesses)
                             .onSubmit { collectorService.applyExcludedProcesses(excludedProcesses) }
                     }
-                    Text("按进程名或显示名精确匹配（不区分大小写），例如 `mDNSResponder, 微信`。\n生效后已统计的数据会一并清除。")
+                    Text(L("settings.excluded.hint"))
                         .font(.caption).foregroundStyle(.secondary)
                 } header: {
-                    Text("高级")
+                    Text(L("settings.section.advanced"))
                 }
             }
-            .tabItem { Label("通用", systemImage: "gear") }
+            .tabItem { Label(L("settings.tab.general"), systemImage: "gear") }
             .formStyle(.grouped)
             .padding()
 
             // 分组管理
             groupTabView
-                .tabItem { Label("分组", systemImage: "square.grid.2x2") }
+                .tabItem { Label(L("settings.tab.groups"), systemImage: "square.grid.2x2") }
                 .formStyle(.grouped)
                 .padding()
 
             // 告警设置
             alertTabView
-                .tabItem { Label("告警", systemImage: "bell.badge") }
+                .tabItem { Label(L("settings.tab.alerts"), systemImage: "bell.badge") }
                 .formStyle(.grouped)
                 .padding()
 
             // 调试日志
             logTabView
-                .tabItem { Label("日志", systemImage: "text.alignleft") }
+                .tabItem { Label(L("settings.tab.logs"), systemImage: "text.alignleft") }
                 .padding()
 
             Form {
                 Section {
-                    LabeledContent("版本", value: Constants.appVersion)
-                    LabeledContent("技术栈", value: "SwiftUI + GRDB + NetworkStatistics")
-                    LabeledContent("最低系统", value: "macOS 14.0 (Sonoma)")
+                    LabeledContent(L("about.version"), value: Constants.appVersion)
+                    LabeledContent(L("about.stack"), value: "SwiftUI + GRDB + NetworkStatistics")
+                    LabeledContent(L("about.minSystem"), value: "macOS 14.0 (Sonoma)")
                 } header: {
-                    Text("关于")
+                    Text(L("about.section.about"))
                 }
 
                 Section {
-                    LabeledContent("采集方式", value: "NetworkStatistics 内核接口（无子进程）")
-                    LabeledContent("提权方式", value: "无需提权")
-                    LabeledContent("数据库", value: "SQLite (WAL mode, GRDB)")
+                    LabeledContent(L("about.collection"), value: L("about.collection.value"))
+                    LabeledContent(L("about.privilege"), value: L("about.privilege.value"))
+                    LabeledContent(L("about.database"), value: "SQLite (WAL mode, GRDB)")
                 } header: {
-                    Text("技术细节")
+                    Text(L("about.section.details"))
                 }
             }
-            .tabItem { Label("关于", systemImage: "info.circle") }
+            .tabItem { Label(L("settings.tab.about"), systemImage: "info.circle") }
             .formStyle(.grouped)
             .padding()
         }
@@ -195,35 +204,35 @@ struct SettingsView: View {
         Form {
             Section {
                 if alertRules.isEmpty {
-                    HStack { Spacer(); Text("暂无告警规则").foregroundColor(.secondary); Spacer() }
+                    HStack { Spacer(); Text(L("alerts.none")).foregroundColor(.secondary); Spacer() }
                 } else {
                     ForEach($alertRules) { $rule in
                         HStack {
                             Toggle("", isOn: $rule.enabled).labelsHidden().frame(width: 30)
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(rule.displayName).lineLimit(1)
-                                Text(rule.processKey ?? "全局")
+                                Text(rule.processKey ?? L("alerts.global"))
                                     .font(.caption).foregroundColor(.secondary)
                             }
                         }
-                        .contextMenu { Button("删除", role: .destructive) { alertRules.removeAll { $0.id == rule.id }; saveAlertRules() } }
+                        .contextMenu { Button(L("common.delete"), role: .destructive) { alertRules.removeAll { $0.id == rule.id }; saveAlertRules() } }
                     }
                 }
             } header: {
-                Text("现有规则")
+                Text(L("alerts.existing"))
             }
 
             Section {
-                TextField("进程名（留空=全局）", text: $newAlertProcess)
-                TextField("字节阈值（如 104857600）", text: $newAlertBytes)
-                TextField("速率阈值 B/s（如 1048576）", text: $newAlertRate)
-                Button("添加规则") {
+                TextField(L("alerts.processPlaceholder"), text: $newAlertProcess)
+                TextField(L("alerts.bytesPlaceholder"), text: $newAlertBytes)
+                TextField(L("alerts.ratePlaceholder"), text: $newAlertRate)
+                Button(L("alerts.add")) {
                     guard !newAlertBytes.isEmpty || !newAlertRate.isEmpty else { return }
                     let key = newAlertProcess.trimmingCharacters(in: .whitespaces)
-                    let name = key.isEmpty ? "全局" : key
+                    let name = key.isEmpty ? L("alerts.global") : key
                     let rule = AlertRule(
                         processKey: key.isEmpty ? nil : key,
-                        displayName: "\(name) 告警",
+                        displayName: L("alerts.name", name),
                         thresholdBytes: Int64(newAlertBytes),
                         thresholdRate: Double(newAlertRate)
                     )
@@ -236,7 +245,7 @@ struct SettingsView: View {
                 .disabled(newAlertBytes.isEmpty && newAlertRate.isEmpty)
                 .keyboardShortcut(.return, modifiers: [])
             } header: {
-                Text("新建规则")
+                Text(L("alerts.new"))
             }
         }
         .onAppear { alertRules = collectorService.alertRules }
@@ -257,7 +266,7 @@ struct SettingsView: View {
         Form {
             Section {
                 if processGroups.isEmpty {
-                    HStack { Spacer(); Text("暂无分组").foregroundColor(.secondary); Spacer() }
+                    HStack { Spacer(); Text(L("groups.none")).foregroundColor(.secondary); Spacer() }
                 } else {
                     ForEach(processGroups) { group in
                         HStack {
@@ -270,17 +279,17 @@ struct SettingsView: View {
                             Spacer()
                             Text("\(group.processKeys.count)").font(.caption.monospacedDigit()).foregroundColor(.secondary)
                         }
-                        .contextMenu { Button("删除", role: .destructive) { processGroups.removeAll { $0.id == group.id }; saveGroups() } }
+                        .contextMenu { Button(L("common.delete"), role: .destructive) { processGroups.removeAll { $0.id == group.id }; saveGroups() } }
                     }
                 }
             } header: {
-                Text("现有分组")
+                Text(L("groups.existing"))
             }
 
             Section {
-                TextField("分组名称", text: $newGroupName)
-                TextField("进程键（逗号分隔）", text: $newGroupKeys)
-                Button("创建分组") {
+                TextField(L("groups.namePlaceholder"), text: $newGroupName)
+                TextField(L("groups.keysPlaceholder"), text: $newGroupKeys)
+                Button(L("groups.create")) {
                     let name = newGroupName.trimmingCharacters(in: .whitespaces)
                     let keys = Set(newGroupKeys.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })
                     guard !name.isEmpty, !keys.isEmpty else { return }
@@ -292,7 +301,7 @@ struct SettingsView: View {
                 .disabled(newGroupName.isEmpty || newGroupKeys.isEmpty)
                 .keyboardShortcut(.return, modifiers: [])
             } header: {
-                Text("新建分组")
+                Text(L("groups.new"))
             }
         }
         .onAppear { processGroups = dashboardVM.processGroups }
@@ -311,8 +320,8 @@ struct SettingsView: View {
     private var logTabView: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Picker("过滤", selection: $logFilter) {
-                    Text("全部").tag(nil as LogEntry.Level?)
+                Picker(L("logs.filter"), selection: $logFilter) {
+                    Text(L("logs.all")).tag(nil as LogEntry.Level?)
                     ForEach(LogEntry.Level.allCases, id: \.self) { lvl in
                         Text(lvl.rawValue).tag(lvl as LogEntry.Level?)
                     }
@@ -320,11 +329,11 @@ struct SettingsView: View {
                 .pickerStyle(.segmented)
                 .frame(width: 250)
 
-                Button("刷新") { Task { await loadLogs() } }
+                Button(L("logs.refresh")) { Task { await loadLogs() } }
 
                 Spacer()
 
-                Text("最近 50 条").font(.caption).foregroundColor(.secondary)
+                Text(L("logs.recent")).font(.caption).foregroundColor(.secondary)
             }
 
             ScrollView {

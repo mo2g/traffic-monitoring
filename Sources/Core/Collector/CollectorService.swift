@@ -47,6 +47,19 @@ final class CollectorService {
 
     var alertRules: [AlertRule] = []
 
+    /// 界面语言。
+    ///
+    /// 放在这里是因为它已经是全应用注入的设置载体（菜单栏、趋势图开关都在此）。
+    /// 切换时除了改 `L10n` 的查表包，还要让整棵视图树重建 —— `L()` 返回的是
+    /// 普通 String，SwiftUI 无从得知它依赖了语言，所以在 App 层用 `.id(language)`
+    /// 强制换身份。
+    var language: AppLanguage = L10n.stored {
+        didSet {
+            guard language != oldValue else { return }
+            L10n.stored = language
+        }
+    }
+
     /// 表格行内显示最近速率的 sparkline（默认关闭）
     var sparklineEnabled: Bool = Preferences.sparklineEnabled {
         didSet {
@@ -94,14 +107,14 @@ final class CollectorService {
             try await DataStore.shared.setup()
             try await DataStore.shared.pruneExpired()
         } catch {
-            await LogStore.shared.log("DB 初始化失败: \(error)", level: .error, tag: "Collector")
-            status = .error("Database init failed")
+            await LogStore.shared.log("Database init failed: \(error)", level: .error, tag: "Collector")
+            status = .error(L("error.databaseInit"))
             return
         }
 
         guard let collector = NStatCollector() else {
-            await LogStore.shared.log("NetworkStatistics 框架不可用", level: .error, tag: "Collector")
-            status = .error("NetworkStatistics unavailable")
+            await LogStore.shared.log("NetworkStatistics framework unavailable", level: .error, tag: "Collector")
+            status = .error(L("error.frameworkUnavailable"))
             return
         }
         self.collector = collector
@@ -121,7 +134,7 @@ final class CollectorService {
 
         status = .running
         await LogStore.shared.log(
-            "采集已启动（\(interval)s 采样 / \(Constants.uiRefreshInterval)s 刷新 / \(saveInterval)s 落库）",
+            "Started (\(interval)s sample / \(Constants.uiRefreshInterval)s refresh / \(saveInterval)s flush)",
             level: .info, tag: "Collector"
         )
     }
@@ -138,7 +151,7 @@ final class CollectorService {
         teardownTask = Task {
             await TrafficPipeline.shared.flush(force: true)
             await TrafficPipeline.shared.reset()
-            await LogStore.shared.log("采集已停止", level: .info, tag: "Collector")
+            await LogStore.shared.log("Stopped", level: .info, tag: "Collector")
         }
     }
 
@@ -157,7 +170,7 @@ final class CollectorService {
         let summaries = (try? await DataStore.shared.querySummary(since: since)) ?? []
         await TrafficPipeline.shared.reloadHistorical(summaries)
         await LogStore.shared.log(
-            "统计窗口切换为「\(range.rawValue)」，载入 \(summaries.count) 条历史",
+            "Time range → \(range.rawValue), loaded \(summaries.count) historical rows",
             level: .info, tag: "Collector"
         )
     }

@@ -13,14 +13,15 @@ import SwiftUI
 ///    being laid out"，同时整条菜单栏跟着左右抖动。
 ///    所以用等宽字体 + 定长格式串 + 显式 frame 三重保证。
 /// 2. 上下两行比左右并排省一半横向空间，也是同类工具的通行做法。
+///    上行在上、下行在下，与箭头方向直觉一致。
 @MainActor
 struct MenuBarLabel: View {
     @Environment(DashboardViewModel.self) private var dashboard
 
     var body: some View {
         VStack(alignment: .trailing, spacing: -1) {
-            Text("↓" + ByteFormatter.rateStringCompact(bytesPerSecond: dashboard.totalRxRate))
             Text("↑" + ByteFormatter.rateStringCompact(bytesPerSecond: dashboard.totalTxRate))
+            Text("↓" + ByteFormatter.rateStringCompact(bytesPerSecond: dashboard.totalRxRate))
         }
         .font(.system(size: 9, weight: .medium, design: .monospaced))
         .monospacedDigit()
@@ -51,7 +52,7 @@ struct MenuBarPanel: View {
             Divider().padding(.vertical, 6)
 
             if topRows.isEmpty {
-                Text("当前没有网络活动")
+                Text(L("menubar.noActivity"))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 10)
@@ -80,11 +81,11 @@ struct MenuBarPanel: View {
 
     private var totals: some View {
         HStack(spacing: 0) {
-            metric("下载", ByteFormatter.rateString(bytesPerSecond: dashboard.totalRxRate), .blue)
+            metric(L("summary.downloadRate"), ByteFormatter.rateString(bytesPerSecond: dashboard.totalRxRate), .blue)
             Divider().frame(height: 26).padding(.horizontal, 10)
-            metric("上传", ByteFormatter.rateString(bytesPerSecond: dashboard.totalTxRate), .red)
+            metric(L("summary.uploadRate"), ByteFormatter.rateString(bytesPerSecond: dashboard.totalTxRate), .red)
             Divider().frame(height: 26).padding(.horizontal, 10)
-            metric(dashboard.selectedTimeRange.rawValue,
+            metric(dashboard.selectedTimeRange.displayName,
                    ByteFormatter.string(bytes: dashboard.totalTraffic), .primary)
             Spacer()
         }
@@ -100,7 +101,7 @@ struct MenuBarPanel: View {
 
     private var actions: some View {
         VStack(spacing: 2) {
-            menuButton("打开主窗口", "macwindow") {
+            menuButton(L("menubar.openMainWindow"), "macwindow") {
                 NSApp.activate(ignoringOtherApps: true)
                 if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.contentView != nil }) {
                     window.makeKeyAndOrderFront(nil)
@@ -108,13 +109,13 @@ struct MenuBarPanel: View {
                     openWindow(id: MainWindowID.value)
                 }
             }
-            menuButton(collector.status == .running ? "停止采集" : "启动采集",
+            menuButton(collector.status == .running ? L("menubar.stopCollecting") : L("menubar.startCollecting"),
                        collector.status == .running ? "stop.fill" : "play.fill") {
                 if collector.status == .running { collector.stop() }
                 else { Task { await collector.start() } }
             }
             Divider().padding(.vertical, 2)
-            menuButton("退出 TrafficMonitor", "power") { NSApp.terminate(nil) }
+            menuButton(L("menubar.quit"), "power") { NSApp.terminate(nil) }
         }
     }
 

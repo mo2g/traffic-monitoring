@@ -64,9 +64,9 @@ enum ChartStyle: String, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .line: "曲线"
-        case .area: "面积"
-        case .bar:  "柱状"
+        case .line: L("detail.style.line")
+        case .area: L("detail.style.area")
+        case .bar:  L("detail.style.bar")
         }
     }
 
@@ -128,10 +128,10 @@ struct DetailWindow: View {
             Spacer()
 
             Picker("", selection: $range) {
-                Text("1 小时").tag(3_600.0)
-                Text("6 小时").tag(21_600.0)
-                Text("24 小时").tag(86_400.0)
-                Text("7 天").tag(604_800.0)
+                Text(L("detail.range.1h")).tag(3_600.0)
+                Text(L("detail.range.6h")).tag(21_600.0)
+                Text(L("detail.range.24h")).tag(86_400.0)
+                Text(L("detail.range.7d")).tag(604_800.0)
             }
             .pickerStyle(.segmented).frame(width: 230).labelsHidden()
 
@@ -141,12 +141,12 @@ struct DetailWindow: View {
                 }
             }
             .pickerStyle(.segmented).frame(width: 110).labelsHidden()
-            .help("切换图表样式")
+            .help(L("detail.chartStyle.help"))
 
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill").font(.title2).foregroundStyle(.secondary)
             }
-            .buttonStyle(.plain).help("关闭 (Esc)")
+            .buttonStyle(.plain).help(L("detail.close"))
             .keyboardShortcut(.escape, modifiers: [])
         }
         .padding(.horizontal).padding(.vertical, 10)
@@ -162,23 +162,23 @@ struct DetailWindow: View {
         let peakOut = Double(vm.timeline.map(\.bytesOut).max() ?? 0) / bucket
 
         return HStack(spacing: 0) {
-            stat("实时下载", ByteFormatter.rateString(bytesPerSecond: live?.rxRate ?? 0),
+            stat(L("detail.liveDownload"), ByteFormatter.rateString(bytesPerSecond: live?.rxRate ?? 0),
                  .blue, highlight: (live?.rxRate ?? 0) > 0)
             divider
-            stat("实时上传", ByteFormatter.rateString(bytesPerSecond: live?.txRate ?? 0),
+            stat(L("detail.liveUpload"), ByteFormatter.rateString(bytesPerSecond: live?.txRate ?? 0),
                  .red, highlight: (live?.txRate ?? 0) > 0)
             divider
-            stat("区间下载", ByteFormatter.string(bytes: totalIn), .blue)
+            stat(L("detail.rangeDownload"), ByteFormatter.string(bytes: totalIn), .blue)
             divider
-            stat("区间上传", ByteFormatter.string(bytes: totalOut), .red)
+            stat(L("detail.rangeUpload"), ByteFormatter.string(bytes: totalOut), .red)
             divider
-            stat("合计", ByteFormatter.string(bytes: totalIn + totalOut))
+            stat(L("detail.total"), ByteFormatter.string(bytes: totalIn + totalOut))
             divider
-            stat("峰值下载", ByteFormatter.rateString(bytesPerSecond: peakIn), .blue.opacity(0.7))
+            stat(L("detail.peakDownload"), ByteFormatter.rateString(bytesPerSecond: peakIn), .blue.opacity(0.7))
             divider
-            stat("峰值上传", ByteFormatter.rateString(bytesPerSecond: peakOut), .red.opacity(0.7))
+            stat(L("detail.peakUpload"), ByteFormatter.rateString(bytesPerSecond: peakOut), .red.opacity(0.7))
             Spacer()
-            stat("数据点", "\(vm.timeline.count)", .secondary)
+            stat(L("detail.dataPoints"), "\(vm.timeline.count)", .secondary)
         }
     }
 
@@ -203,7 +203,7 @@ struct DetailWindow: View {
             VStack(spacing: 8) {
                 Spacer()
                 Image(systemName: "chart.xyaxis.line").font(.system(size: 28)).foregroundStyle(.secondary)
-                Text("这段时间没有记录到流量").foregroundStyle(.secondary)
+                Text(L("detail.noData")).foregroundStyle(.secondary)
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -245,8 +245,8 @@ private struct TrafficChart: View {
         points.flatMap { p -> [Sample] in
             let date = Date(timeIntervalSince1970: p.timestamp)
             return [
-                Sample(date: date, rate: Double(p.bytesIn) / bucket, direction: "下载"),
-                Sample(date: date, rate: Double(p.bytesOut) / bucket, direction: "上传"),
+                Sample(date: date, rate: Double(p.bytesIn) / bucket, direction: L("chart.series.download")),
+                Sample(date: date, rate: Double(p.bytesOut) / bucket, direction: L("chart.series.upload")),
             ]
         }
     }
@@ -263,39 +263,40 @@ private struct TrafficChart: View {
         Chart(samples) { s in
             switch style {
             case .line:
-                LineMark(x: .value("时间", s.date), y: .value("速率", s.rate))
-                    .foregroundStyle(by: .value("方向", s.direction))
+                LineMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
+                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
                     .interpolationMethod(.catmullRom)   // 平滑曲线
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
             case .area:
                 // AreaMark 默认按分组**堆叠**，而 LineMark 不堆叠 ——
                 // 混用会让红色面积的顶边远高于红色线，读数完全对不上。
-                AreaMark(x: .value("时间", s.date), y: .value("速率", s.rate),
+                AreaMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate),
                          stacking: .unstacked)
-                    .foregroundStyle(by: .value("方向", s.direction))
+                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
                     .interpolationMethod(.catmullRom)
                     .opacity(0.28)
-                LineMark(x: .value("时间", s.date), y: .value("速率", s.rate))
-                    .foregroundStyle(by: .value("方向", s.direction))
+                LineMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
+                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
                     .interpolationMethod(.catmullRom)
                     .lineStyle(StrokeStyle(lineWidth: 1.5))
 
             case .bar:
                 // 柱状用并排而非堆叠，同样是为了让高度直接对应各自的速率
-                BarMark(x: .value("时间", s.date), y: .value("速率", s.rate))
-                    .foregroundStyle(by: .value("方向", s.direction))
-                    .position(by: .value("方向", s.direction))
+                BarMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
+                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
+                    .position(by: .value(L("chart.series"), s.direction))
                     .cornerRadius(2)
             }
 
             if let selectedPoint, s.date == Date(timeIntervalSince1970: selectedPoint.timestamp) {
-                RuleMark(x: .value("时间", s.date))
+                RuleMark(x: .value(L("chart.axis.time"), s.date))
                     .foregroundStyle(.secondary.opacity(0.35))
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
         }
-        .chartForegroundStyleScale(["下载": Color.blue, "上传": Color.red])
+        .chartForegroundStyleScale([L("chart.series.download"): Color.blue,
+                                    L("chart.series.upload"): Color.red])
         .chartLegend(position: .top, alignment: .leading, spacing: 8)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 6)) { value in

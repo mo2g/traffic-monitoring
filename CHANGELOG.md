@@ -4,6 +4,26 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] — 2026-09-07
+
+### Fixed
+
+- **打包成 .app 后界面无响应**：`MenuBarExtra(isInserted:)` 每次场景更新都会把
+  当前值回写进绑定，而 `@Observable` 的合成 setter 即使值没变也调用
+  `withMutation`，于是 `App.body` 求值 → 回写 → 失效 → 再求值形成死循环。
+  打包后每轮还多一次 `SMAppService` 的阻塞 XPC（`SettingsView` 的 `@State`
+  初值表达式），主线程被彻底打满。修复后主线程 452/457 个采样空转。
+- **面积图与折线对不上**：`AreaMark` 默认按分组**堆叠**而 `LineMark` 不堆叠，
+  红色面积顶边远高于红色线。改用 `stacking: .unstacked`。
+- **图表样式用中文显示名做持久化值**：`"detail.style" = "面积"` 直接写进
+  UserDefaults，既让存储依赖界面语言，初始选中项也对不上。
+  `rawValue` 改为稳定的 `line` / `area` / `bar`，展示文案走独立的 `label`。
+- **默认窗口宽度放不下六列**，「合计」列被挤出可视区并出现横向滚动条。
+
+### Added
+
+- README 补上主窗口与时间线截图。
+
 ## [0.5.0] — 2026-09-07
 
 补齐此前列在 Roadmap 里的功能，并接上自动发布。

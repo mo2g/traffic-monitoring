@@ -17,7 +17,7 @@ struct TrafficMonitorApp: App {
             MainWindowView()
                 .environment(collectorService)
                 .environment(dashboardVM)
-                .frame(minWidth: 800, minHeight: 500)
+                .frame(minWidth: 940, idealWidth: 1080, minHeight: 520, idealHeight: 680)
                 .onAppear {
                     if Bundle.main.bundleIdentifier != nil {
                         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
@@ -34,7 +34,9 @@ struct TrafficMonitorApp: App {
                 }
         }
         .windowStyle(.titleBar)
-        .defaultSize(width: 900, height: 600)
+        // 默认宽度要放得下侧栏 + 六列表格，否则「合计」列会被挤出可视区、
+        // 出现横向滚动条
+        .defaultSize(width: 1080, height: 680)
 
         // 这里**不能**直接用 Bindable(collectorService).menuBarEnabled。
         //

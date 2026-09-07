@@ -8,6 +8,7 @@ struct ProcessStats {
     /// 已落库的历史累计
     var historicalIn: Int64 = 0
     var historicalOut: Int64 = 0
+
     /// 尚未落库的实时累计
     var liveIn: Int64 = 0
     var liveOut: Int64 = 0
@@ -51,23 +52,56 @@ actor TrafficPipeline {
 
     // MARK: - 生命周期
 
-    /// 用数据库里的历史汇总初始化累加器
-    func initialize(historical: [ProcessSummary]) {
-        for h in historical {
-            let identity = ProcessIdentifier(
-                bundleId: h.bundleId,
-                execName: h.processKey,
-                displayName: h.displayName
-            )
-            var s = stats[h.processKey] ?? ProcessStats(
-                identity: identity,
-                icon: IconCatalog.icon(for: h.displayName)
-            )
-            s.historicalIn = h.totalIn
-            s.historicalOut = h.totalOut
-            s.sampleCount = h.sampleCount
-            stats[h.processKey] = s
+    /// 用数据库里某个时间窗的汇总替换「历史」部分。
+    ///
+    /// 启动时调一次，之后每次切换时间范围再调一次 —— 所以必须是幂等的替换，
+    /// 而不是累加。
+    ///
+    /// 账目关系：
+    /// - `historical` = 该时间窗内已落库的字节
+    /// - `live` = 已采集但还没落库的字节（`flush()` 会把它转进 historical）
+    /// - `total = historical + live`，两边不重不漏
+    ///
+    /// 窗口变化后，原来有数据、新窗口里没有的进程，其 historical 要清零，
+    /// 否则会把窗口外的流量留在总数里。已解析过的身份（含图标路径）保留不动。
+    func reloadHistorical(_ summaries: [ProcessSummary]) {
+        var remaining = Set(stats.keys)
+
+        for h in summaries {
+            remaining.remove(h.processKey)
+            if var s = stats[h.processKey] {
+                s.historicalIn = h.totalIn
+                s.historicalOut = h.totalOut
+                s.sampleCount = h.sampleCount
+                stats[h.processKey] = s
+            } else {
+                let identity = ProcessIdentifier(
+                    bundleId: h.bundleId,
+                    execName: h.processKey,
+                    displayName: h.displayName
+                )
+                stats[h.processKey] = ProcessStats(
+                    identity: identity,
+                    icon: IconCatalog.icon(for: h.displayName),
+                    historicalIn: h.totalIn,
+                    historicalOut: h.totalOut,
+                    sampleCount: h.sampleCount
+                )
+            }
         }
+
+        for key in remaining {
+            guard var s = stats[key] else { continue }
+            s.historicalIn = 0
+            s.historicalOut = 0
+            stats[key] = s
+            // 窗口内既无历史也无实时数据的进程直接移出列表
+            if s.liveIn == 0, s.liveOut == 0, s.rxRate == 0, s.txRate == 0 {
+                stats.removeValue(forKey: key)
+            }
+        }
+
+        lastPushedAt = .distantPast   // 让下一帧立刻把新窗口的数字推给 UI
     }
 
     func setAlertRules(_ rules: [AlertRule]) { alertRules = rules }

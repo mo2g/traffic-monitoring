@@ -142,3 +142,117 @@ final class TrafficPipelineTests: XCTestCase {
         XCTAssertNotNil(due)
     }
 }
+
+// ============================================================
+// MARK: - 统计窗口切换
+// ============================================================
+
+/// 切换「今日 / 本周 / 本月」时，管线的历史部分必须是**替换**而不是累加，
+/// 且不能动到尚未落库的实时部分。
+final class TimeRangeReloadTests: XCTestCase {
+    private let pipeline = TrafficPipeline.shared
+
+    override func setUp() async throws { await pipeline.reset() }
+    override func tearDown() async throws { await pipeline.reset() }
+
+    private func summary(_ key: String, in bytesIn: Int64, out bytesOut: Int64) -> ProcessSummary {
+        ProcessSummary(processKey: key, bundleId: nil, displayName: key,
+                       totalIn: bytesIn, totalOut: bytesOut, sampleCount: 1,
+                       firstSeen: 0, lastSeen: 0)
+    }
+
+    private func row(_ key: String) async -> ProcessRow? {
+        await pipeline.makeSnapshot().rows.first { $0.key == key }
+    }
+
+    private func feed(_ deltas: [PIDDelta]) async {
+        _ = await pipeline.ingest(TrafficFrame(deltas: [], timestamp: Date(),
+                                               interval: 0, isBaseline: true))
+        _ = await pipeline.ingest(TrafficFrame(deltas: deltas, timestamp: Date(),
+                                               interval: 2, isBaseline: false))
+    }
+
+    func testReloadReplacesRatherThanAccumulates() async {
+        await pipeline.reloadHistorical([summary("a", in: 1_000, out: 100)])
+        let first = await row("a")
+        XCTAssertEqual(first?.totalIn, 1_000)
+
+        // 换一个更大的窗口 → 应替换为新值，而不是变成 1000+5000
+        await pipeline.reloadHistorical([summary("a", in: 5_000, out: 500)])
+        let second = await row("a")
+        XCTAssertEqual(second?.totalIn, 5_000)
+        XCTAssertEqual(second?.totalOut, 500)
+    }
+
+    func testLiveBytesSurviveReload() async {
+        await feed([PIDDelta(pid: 999_100, execName: "live", bytesIn: 700, bytesOut: 300)])
+        let live = await row("live")
+        XCTAssertEqual(live?.totalIn, 700)
+
+        await pipeline.reloadHistorical([summary("live", in: 2_000, out: 0)])
+        let merged = await row("live")
+        // 历史 2000 + 尚未落库的实时 700
+        XCTAssertEqual(merged?.totalIn, 2_700)
+        XCTAssertEqual(merged?.totalOut, 300)
+    }
+
+    /// 窗口缩小后落在窗口外的进程，其历史必须清零，否则总数会带上窗口外的流量
+    func testProcessOutsideNewWindowIsDropped() async {
+        await pipeline.reloadHistorical([
+            summary("kept", in: 100, out: 0),
+            summary("dropped", in: 900, out: 0),
+        ])
+        let wide = await pipeline.makeSnapshot()
+        XCTAssertEqual(wide.totalBytes, 1_000)
+
+        await pipeline.reloadHistorical([summary("kept", in: 100, out: 0)])
+        let narrow = await pipeline.makeSnapshot()
+        XCTAssertEqual(narrow.totalBytes, 100)
+        XCTAssertNil(narrow.rows.first { $0.key == "dropped" }, "窗口外且无实时数据的进程应移出列表")
+    }
+
+    /// 有实时数据的进程即使不在新窗口的历史里，也要留在列表上（历史归零、实时保留）
+    func testActiveProcessStaysWithZeroedHistory() async {
+        await feed([PIDDelta(pid: 999_101, execName: "active", bytesIn: 50, bytesOut: 0)])
+        await pipeline.reloadHistorical([summary("active", in: 5_000, out: 0)])
+        let withHistory = await row("active")
+        XCTAssertEqual(withHistory?.totalIn, 5_050)
+
+        await pipeline.reloadHistorical([])   // 新窗口里没有它的历史
+        let liveOnly = await row("active")
+        XCTAssertEqual(liveOnly?.totalIn, 50, "只剩尚未落库的实时部分")
+    }
+}
+
+// ============================================================
+// MARK: - 时间窗口边界
+// ============================================================
+
+final class TimeRangeBoundaryTests: XCTestCase {
+    /// 标签写着「今日」，起点就该是今天零点，而不是往前推 24 小时
+    @MainActor
+    func testTodayStartsAtMidnight() {
+        let start = DashboardViewModel.TimeRange.today.start
+        let parts = Calendar.current.dateComponents([.hour, .minute, .second], from: start)
+        XCTAssertEqual(parts.hour, 0)
+        XCTAssertEqual(parts.minute, 0)
+        XCTAssertEqual(parts.second, 0)
+        XCTAssertTrue(Calendar.current.isDateInToday(start))
+    }
+
+    @MainActor
+    func testRangesAreOrderedFromNarrowToWide() {
+        let today = DashboardViewModel.TimeRange.today.start
+        let week = DashboardViewModel.TimeRange.week.start
+        let month = DashboardViewModel.TimeRange.month.start
+        XCTAssertLessThanOrEqual(week, today)
+        XCTAssertLessThanOrEqual(month, today)
+    }
+
+    @MainActor
+    func testAllStartsAreInThePast() {
+        for range in DashboardViewModel.TimeRange.allCases {
+            XCTAssertLessThanOrEqual(range.start, Date(), "\(range.rawValue) 起点不应在未来")
+        }
+    }
+}

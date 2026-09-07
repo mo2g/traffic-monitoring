@@ -30,7 +30,14 @@ final class DashboardViewModel {
         didSet { resort() }
     }
 
-    var selectedTimeRange: TimeRange = .today
+    /// 统计窗口。切换会真正重查数据库并替换管线里的「历史」部分。
+    var selectedTimeRange: TimeRange = Preferences.timeRange {
+        didSet {
+            guard selectedTimeRange != oldValue else { return }
+            Preferences.timeRange = selectedTimeRange
+            Task { await CollectorService.shared.applyTimeRange(selectedTimeRange) }
+        }
+    }
 
     /// 进程名过滤（工具栏搜索框）
     var searchText: String = "" {
@@ -48,9 +55,20 @@ final class DashboardViewModel {
 
     enum TimeRange: String, CaseIterable, Identifiable {
         case today = "今日", week = "本周", month = "本月"
+
         var id: String { rawValue }
-        var seconds: TimeInterval {
-            switch self { case .today: 86400; case .week: 604800; case .month: 2592000 }
+
+        /// 窗口起点。用日历边界而不是「往前推 N 秒」——
+        /// 标签写着「今日」，用户期望的是今天零点起算，不是过去 24 小时。
+        var start: Date {
+            let calendar = Calendar.current
+            let now = Date()
+            let component: Set<Calendar.Component> = switch self {
+            case .today: [.year, .month, .day]
+            case .week:  [.yearForWeekOfYear, .weekOfYear]
+            case .month: [.year, .month]
+            }
+            return calendar.date(from: calendar.dateComponents(component, from: now)) ?? now
         }
     }
 

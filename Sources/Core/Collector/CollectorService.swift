@@ -90,9 +90,7 @@ final class CollectorService {
         self.collector = collector
 
         // 历史累计先灌进管线，再开始消费实时帧
-        let since = Date().timeIntervalSince1970 - 86400
-        let historical = (try? await DataStore.shared.querySummary(since: since, limit: 200)) ?? []
-        await TrafficPipeline.shared.initialize(historical: historical)
+        await applyTimeRange(Preferences.timeRange)
         await TrafficPipeline.shared.setAlertRules(alertRules)
 
         // 单次迭代：首帧由管线自己识别为 baseline，无需在这里先消费一帧
@@ -103,7 +101,7 @@ final class CollectorService {
 
         status = .running
         await LogStore.shared.log(
-            "采集已启动（\(interval)s 采样 / \(Constants.uiRefreshInterval)s 刷新 / \(saveInterval)s 落库），历史 \(historical.count) 条",
+            "采集已启动（\(interval)s 采样 / \(Constants.uiRefreshInterval)s 刷新 / \(saveInterval)s 落库）",
             level: .info, tag: "Collector"
         )
     }
@@ -128,6 +126,20 @@ final class CollectorService {
     func restart() async {
         stop()
         await start()
+    }
+
+    /// 切换统计窗口：按新窗口重查数据库，替换管线里的历史部分。
+    ///
+    /// 实时累计（尚未落库的那部分）保持不动 —— 它和历史部分不重叠，
+    /// `flush()` 会把它转进历史。
+    func applyTimeRange(_ range: DashboardViewModel.TimeRange) async {
+        let since = range.start.timeIntervalSince1970
+        let summaries = (try? await DataStore.shared.querySummary(since: since)) ?? []
+        await TrafficPipeline.shared.reloadHistorical(summaries)
+        await LogStore.shared.log(
+            "统计窗口切换为「\(range.rawValue)」，载入 \(summaries.count) 条历史",
+            level: .info, tag: "Collector"
+        )
     }
 
     func loadAlertRules() {
@@ -218,6 +230,7 @@ enum Preferences {
     private static let intervalKey = "com.trafficmonitor.interval"
     private static let saveIntervalKey = "com.trafficmonitor.saveInterval"
     private static let menuBarKey = "com.trafficmonitor.menuBarEnabled"
+    private static let timeRangeKey = "com.trafficmonitor.timeRange"
 
     static var interval: TimeInterval {
         get { read(intervalKey, default: Constants.defaultInterval) }
@@ -227,6 +240,14 @@ enum Preferences {
     static var saveInterval: TimeInterval {
         get { read(saveIntervalKey, default: Constants.batchSaveInterval) }
         set { UserDefaults.standard.set(newValue, forKey: saveIntervalKey) }
+    }
+
+    static var timeRange: DashboardViewModel.TimeRange {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: timeRangeKey) else { return .today }
+            return DashboardViewModel.TimeRange(rawValue: raw) ?? .today
+        }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: timeRangeKey) }
     }
 
     static var menuBarEnabled: Bool {

@@ -2,16 +2,23 @@
 
 **Per-application network traffic monitoring for macOS — that still works behind a VPN or proxy.**
 
+[![CI](https://github.com/mo2g/traffic-monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/mo2g/traffic-monitoring/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange)](https://swift.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 English | [简体中文](README.zh-CN.md)
 
-<!--
-Screenshots go here once you have them, e.g.:
-![Main window](docs/screenshots/main-window.png)
--->
+<img src="docs/screenshots/main-window.png" width="900" alt="Main window — per-app traffic with live rates and real application icons">
+
+<details>
+<summary>Per-process timeline</summary>
+
+<img src="docs/screenshots/timeline.png" width="900" alt="Timeline window — smoothed curve with hover readout">
+
+Switchable between a smoothed curve, a filled area and grouped bars, over 1 h / 6 h / 24 h / 7 d.
+
+</details>
 
 ## Why this exists
 
@@ -64,7 +71,7 @@ No administrator privileges are required, at build time or at run time.
 
 ### Download
 
-Grab the latest `.dmg` from [Releases](https://github.com/OWNER/REPO/releases), open it
+Grab the latest `.dmg` from [Releases](https://github.com/mo2g/traffic-monitoring/releases), open it
 and drag the app to Applications. Builds are produced by GitHub Actions from a tagged
 commit and carry a SHA-256 checksum in the release notes.
 
@@ -78,7 +85,7 @@ xattr -dr com.apple.quarantine /Applications/TrafficMonitor.app
 ### Build from source
 
 ```bash
-git clone https://github.com/OWNER/REPO.git
+git clone https://github.com/mo2g/traffic-monitoring.git
 cd REPO
 Scripts/make-dmg.sh              # → dist/TrafficMonitor-<version>.dmg
 ```

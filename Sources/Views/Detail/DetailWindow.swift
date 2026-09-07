@@ -54,11 +54,21 @@ enum TimelineBucket {
 // MARK: - 图表样式
 
 enum ChartStyle: String, CaseIterable, Identifiable {
-    case line = "曲线"
-    case area = "面积"
-    case bar  = "柱状"
+    // rawValue 是**持久化用的稳定标识**，不是展示文案。
+    // 一开始把中文显示名直接当 rawValue 存进 UserDefaults，
+    // 这既让存储内容依赖界面语言（将来做多语言时旧偏好全部失效），
+    // 也让 Picker 的初始选中项对不上。展示文案走 `label`。
+    case line, area, bar
 
     var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .line: "曲线"
+        case .area: "面积"
+        case .bar:  "柱状"
+        }
+    }
 
     var symbol: String {
         switch self {
@@ -127,7 +137,7 @@ struct DetailWindow: View {
 
             Picker("", selection: $styleRaw) {
                 ForEach(ChartStyle.allCases) { s in
-                    Image(systemName: s.symbol).tag(s.rawValue)
+                    Image(systemName: s.symbol).tag(s.rawValue).help(s.label)
                 }
             }
             .pickerStyle(.segmented).frame(width: 110).labelsHidden()
@@ -259,19 +269,24 @@ private struct TrafficChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
             case .area:
-                AreaMark(x: .value("时间", s.date), y: .value("速率", s.rate))
+                // AreaMark 默认按分组**堆叠**，而 LineMark 不堆叠 ——
+                // 混用会让红色面积的顶边远高于红色线，读数完全对不上。
+                AreaMark(x: .value("时间", s.date), y: .value("速率", s.rate),
+                         stacking: .unstacked)
                     .foregroundStyle(by: .value("方向", s.direction))
                     .interpolationMethod(.catmullRom)
-                    .opacity(0.35)
+                    .opacity(0.28)
                 LineMark(x: .value("时间", s.date), y: .value("速率", s.rate))
                     .foregroundStyle(by: .value("方向", s.direction))
                     .interpolationMethod(.catmullRom)
                     .lineStyle(StrokeStyle(lineWidth: 1.5))
 
             case .bar:
+                // 柱状用并排而非堆叠，同样是为了让高度直接对应各自的速率
                 BarMark(x: .value("时间", s.date), y: .value("速率", s.rate))
                     .foregroundStyle(by: .value("方向", s.direction))
                     .position(by: .value("方向", s.direction))
+                    .cornerRadius(2)
             }
 
             if let selectedPoint, s.date == Date(timeIntervalSince1970: selectedPoint.timestamp) {

@@ -2,16 +2,23 @@
 
 **macOS 上按应用统计网络流量 —— 在 VPN / 代理模式下依然准确。**
 
+[![CI](https://github.com/mo2g/traffic-monitoring/actions/workflows/ci.yml/badge.svg)](https://github.com/mo2g/traffic-monitoring/actions/workflows/ci.yml)
 [![Platform](https://img.shields.io/badge/platform-macOS%2014%2B-lightgrey)](https://www.apple.com/macos/)
 [![Swift](https://img.shields.io/badge/Swift-5.9-orange)](https://swift.org)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 [English](README.md) | 简体中文
 
-<!--
-截图放这里，例如：
-![主窗口](docs/screenshots/main-window.png)
--->
+<img src="docs/screenshots/main-window.png" width="900" alt="主窗口 —— 按应用统计，实时速率与真实应用图标">
+
+<details>
+<summary>单进程时间线</summary>
+
+<img src="docs/screenshots/timeline.png" width="900" alt="时间线窗口 —— 平滑曲线与悬停读数">
+
+可在平滑曲线、填充面积、并排柱状之间切换，跨度支持 1 小时 / 6 小时 / 24 小时 / 7 天。
+
+</details>
 
 ## 为什么需要它
 
@@ -61,7 +68,7 @@ TrafficMonitor 直接对接这个内核子系统（`nettop` 和「活动监视�
 
 ### 直接下载
 
-到 [Releases](https://github.com/OWNER/REPO/releases) 下载最新的 `.dmg`，
+到 [Releases](https://github.com/mo2g/traffic-monitoring/releases) 下载最新的 `.dmg`，
 打开后把应用拖进「应用程序」。安装包由 GitHub Actions 从打过 tag 的提交自动构建，
 发布说明里附有 SHA-256 校验和。
 
@@ -75,7 +82,7 @@ xattr -dr com.apple.quarantine /Applications/TrafficMonitor.app
 ### 从源码构建
 
 ```bash
-git clone https://github.com/OWNER/REPO.git
+git clone https://github.com/mo2g/traffic-monitoring.git
 cd REPO
 Scripts/make-dmg.sh              # → dist/TrafficMonitor-<版本>.dmg
 ```

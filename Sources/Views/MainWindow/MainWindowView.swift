@@ -296,7 +296,7 @@ private struct ProcessTableView: View {
                     Text(ByteFormatter.string(bytes: row.totalBytes))
                         .fontWeight(.medium).monospacedDigit()
                 }
-                .width(min: 75)
+                .width(min: 90)
 
                 TableColumn(collector.sparklineEnabled ? "趋势" : "") { row in
                     if collector.sparklineEnabled {

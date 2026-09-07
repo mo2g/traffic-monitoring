@@ -41,13 +41,15 @@ bytes physically left through the proxy.
 
 - **Attribution that survives tunnels** — per-process, read from the kernel above `utun`
 - **Aggregation by bundle identifier** — Chrome's dozens of helper processes collapse into one row
+- **Menu bar mode** — live up/down rates in the menu bar, with a panel listing the busiest apps
 - **Real application icons** — resolved from the process, exactly like Activity Monitor
 - **Live rates and cumulative totals** — sortable native table, updated once per second
 - **Per-process timeline chart** — smoothed line, area or bar, over 1 h / 6 h / 24 h / 7 d
 - **Search and context menu** — filter by name; right-click to copy the bundle ID or reveal the binary in Finder
 - **Custom groups** — roll several apps into one line
 - **Threshold alerts** — by total bytes or by rate, delivered as system notifications (throttled to one per minute per rule)
-- **CSV export**
+- **Per-row trend sparkline** — optional, off by default
+- **Launch at login**, **process exclusions**, **CSV export**
 - **Local SQLite storage** — 60-second bucketing, automatic retention cleanup
 - **Light on resources** — ~1.4% of one CPU core, no root, no kernel extension, no entitlements
 
@@ -59,6 +61,21 @@ bytes physically left through the proxy.
 No administrator privileges are required, at build time or at run time.
 
 ## Install
+
+### Download
+
+Grab the latest `.dmg` from [Releases](https://github.com/OWNER/REPO/releases), open it
+and drag the app to Applications. Builds are produced by GitHub Actions from a tagged
+commit and carry a SHA-256 checksum in the release notes.
+
+They are ad-hoc signed but **not notarized**, so on first launch macOS will block the
+app — right-click → **Open**, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/TrafficMonitor.app
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/OWNER/REPO.git
@@ -80,14 +97,7 @@ Both build a release binary and assemble `TrafficMonitor.app` with its icon.
 > without one — threshold alerts silently do nothing. `Scripts/make-app.sh` generates a
 > proper `Info.plist` and ad-hoc signs the bundle.
 
-The app is not notarized, so on first launch macOS will block it. Either right-click →
-**Open**, or clear the quarantine flag:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/TrafficMonitor.app
-```
-
-The first launch also asks for **Notifications** permission; alerts need it.
+The first launch asks for **Notifications** permission; alerts need it.
 
 ### Build without packaging
 
@@ -107,7 +117,8 @@ status and a start/stop button.
 | Summary cards | Aggregate download / upload rate and total traffic |
 | Table | Per-app live rates and cumulative totals — click a column header to sort, **double-click** a row for its timeline, right-click for more |
 | Search | Filter by process name (`⌘F`) |
-| Sidebar | Switch between per-app and grouped view |
+| Sidebar | Time range (today / this week / this month) and per-app vs grouped view |
+| Menu bar | Live rates; click for the busiest apps and quick actions |
 | Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
 | Settings (`⌘,`) | Sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
 
@@ -162,17 +173,16 @@ recorded: hostnames, IP addresses, ports, or any packet contents.
 | **Private API** | `NetworkStatistics.framework` is undocumented. This app therefore **cannot ship on the Mac App Store**, and a major macOS release could change or remove the symbols it relies on. Verified working on macOS 14.4. |
 | **Loopback traffic is double counted** | When a process connects to itself over `127.0.0.1`, it is both endpoints, so the kernel records the payload once as sent and once as received. Measured: transferring 10 MiB yields rx = 10 MiB *and* tx = 10 MiB, making the "total" column 2× the real payload. Traffic to the internet is unaffected. |
 | **Very short connections** | A connection opened and closed between two samples is dropped along with its source. |
-| **Fixed 24-hour window** | The sidebar's Today / Week / Month selector currently only changes labels; the statistics window is hard-coded to the last 24 hours. |
+
 
 ## Roadmap
 
 Known gaps, roughly in order of usefulness:
 
-- Make the Today / Week / Month selector actually re-query the database
-- Wire up the "excluded processes" field in Settings (currently inert)
-- Launch at login
-- Menu-bar mode with live rates
 - Notarized, signed releases (builds are currently ad-hoc signed only)
+- Per-app traffic quotas rather than one-shot alerts
+- Export the timeline chart as an image
+- Localized UI (currently Simplified Chinese only)
 
 ## Project layout
 

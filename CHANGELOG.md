@@ -4,6 +4,46 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-09-07
+
+补齐此前列在 Roadmap 里的功能，并接上自动发布。
+
+### Added
+
+- **菜单栏模式**：常驻显示上下行速率，点开是一个面板（总速率、最活跃的 6 个
+  进程、启停采集、打开主窗口、退出）。设置里可关，默认开启。
+  标签宽度必须恒定 —— 每秒刷新一次，宽度一变 NSStatusItem 就要在布局过程中
+  重新测量，既让菜单栏抖动也会触发 AppKit 布局递归警告。
+- **「今日 / 本周 / 本月」真正生效**：改用日历边界（今天零点、本周一、本月一号）
+  而非「往前推 N 秒」，切换时重查数据库并替换管线里的历史部分。
+- **「排除进程」输入框接线**：按进程名或本地化显示名精确匹配，改设置立即生效，
+  已累计的数据一并清出。
+- **开机自启动**（`SMAppService`）：不可用时（裸二进制运行）禁用开关并说明原因；
+  被系统设置阻止时给出直达「登录项」的链接。
+- **行内速率趋势图**，默认关闭。用 `Canvas` 手绘而非 Swift Charts。
+- **自动发布**：推送 `v*` tag 触发 GitHub Actions 构建 `.dmg` 并发布到 Releases，
+  发布说明取自 CHANGELOG 对应小节，附 SHA-256 校验和。
+  发布前校验 tag 与 `Constants.appVersion` 一致。
+
+### Fixed
+
+- `.searchable(placement: .toolbar)` 触发的 AppKit 布局递归警告。用 lldb 断在
+  `_NSDetectedLayoutRecursion` 定位到 `NSSearchToolbarItemView.updateConstraints`
+  内部又去调 `layoutSubtreeIfNeeded`，改为在工具栏里自己拼 TextField。
+
+### Performance
+
+窗口在后台、45 秒采样：
+
+| 配置 | CPU |
+|---|---|
+| 基线 | 1.0% |
+| 开启菜单栏（默认） | 1.3–1.4% |
+| 再开启行内趋势图 | 1.6% |
+
+菜单栏开启时 UI 可见性闸门必须一直放行，否则主窗口被遮挡后数字会冻住 ——
+这就是它带来 0.3 个百分点的原因。
+
 ## [0.4.0] — 2026-09-07
 
 体验向的一轮迭代：图表、图标、分发格式。

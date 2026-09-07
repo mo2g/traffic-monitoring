@@ -103,6 +103,50 @@ actor DataStore {
         try deleteBefore(cutoff)
     }
 
+    /// 空闲页占比过高时整理数据库文件，把空间还给系统。
+    ///
+    /// SQLite 删除行只是把页挂到 freelist，文件本身不会缩小 —— 长期运行下
+    /// 「删了很多但文件一直很大」。实测某次运行：1531 页里 1159 页是空闲的，
+    /// 6 MB 文件只装着 8955 行，**76% 是废弃空间**。
+    ///
+    /// 不用 `auto_vacuum`：它只能在建库时设定，且会让每次写入都多做页搬移。
+    /// 这里改为按需 `VACUUM`，只在浪费确实明显时才做。
+    ///
+    /// - Returns: 回收的字节数；未达阈值则为 0
+    @discardableResult
+    func compactIfWasteful(
+        minimumFreeRatio: Double = 0.25,
+        minimumFreeBytes: Int64 = 1 << 20
+    ) throws -> Int64 {
+        guard let writer = dbWriter else { return 0 }
+
+        // 先并回 WAL，否则 freelist_count / page_count 反映的是并入前的旧状态
+        try checkpoint()
+
+        let (freePages, pageSize) = try writer.read { db -> (Int64, Int64) in
+            let free = try Int64.fetchOne(db, sql: "PRAGMA freelist_count") ?? 0
+            let total = try Int64.fetchOne(db, sql: "PRAGMA page_count") ?? 0
+            let size = try Int64.fetchOne(db, sql: "PRAGMA page_size") ?? 0
+            // 总页为 0 时直接跳过，避免除零
+            guard total > 0, Double(free) / Double(total) >= minimumFreeRatio else { return (0, size) }
+            return (free, size)
+        }
+
+        let reclaimable = freePages * pageSize
+        guard reclaimable >= minimumFreeBytes else { return 0 }
+
+        let before = databaseSize()
+        // VACUUM 要重写整个文件，不能在事务里跑
+        try writer.writeWithoutTransaction { db in
+            try db.execute(sql: "VACUUM")
+        }
+        // VACUUM 本身会往 WAL 里写下整个新库。不再 checkpoint 一次的话，
+        // 主库虽然缩了（实测 687 页 → 12 页），WAL 却撑大到比原来还多，
+        // 「整理完反而变大」。
+        try checkpoint()
+        return max(0, before - databaseSize())
+    }
+
     // MARK: - Query
 
     /// 查询指定时间范围内的流量汇总（按进程聚合）
@@ -212,13 +256,25 @@ actor DataStore {
     }
 
     /// 数据库文件大小
+    /// 数据库占用的磁盘空间。
+    ///
+    /// **要把 `-wal` 一起算上。** WAL 模式下新写入先落在 write-ahead log 里，
+    /// checkpoint 之后才并入主库文件 —— 只看主库文件会严重少报：
+    /// 实测刚写完两万行时主库仍是 4096 字节，数据全在 WAL 中。
     func databaseSize() -> Int64 {
-        guard let path = currentDBPath,
-              let attrs = try? FileManager.default
-                .attributesOfItem(atPath: path) else {
-            return 0
+        guard let path = currentDBPath else { return 0 }
+        return ["", "-wal", "-shm"].reduce(into: Int64(0)) { total, suffix in
+            let attributes = try? FileManager.default.attributesOfItem(atPath: path + suffix)
+            total += (attributes?[.size] as? Int64) ?? 0
         }
-        return (attrs[.size] as? Int64) ?? 0
+    }
+
+    /// 把 WAL 并回主库，让页统计和文件大小反映真实情况
+    func checkpoint() throws {
+        guard let writer = dbWriter else { return }
+        try writer.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA wal_checkpoint(TRUNCATE)")
+        }
     }
 
     // MARK: - Testing

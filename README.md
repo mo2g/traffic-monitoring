@@ -58,7 +58,7 @@ bytes physically left through the proxy.
 - **Threshold alerts** — by total bytes or by rate, delivered as system notifications (throttled to one per minute per rule)
 - **Per-row trend sparkline** — optional, off by default
 - **Launch at login**, **process exclusions**, **CSV export**
-- **Local SQLite storage** — 60-second bucketing, automatic retention cleanup
+- **Local SQLite storage** — 60-second bucketing, automatic retention cleanup, and on-demand compaction that returns freed space to the disk
 - **Light on resources** — ~1.4% of one CPU core, no root, no kernel extension, no entitlements
 
 ## Requirements
@@ -126,7 +126,7 @@ status and a start/stop button.
 | Table | Per-app live rates and cumulative totals — click a column header to sort, **double-click** a row for its timeline, right-click for more |
 | Search | Filter by process name (`⌘F`) |
 | Sidebar | Time range (today / this week / this month) and per-app vs grouped view |
-| Menu bar | Live up/down rates on two lines (`↑1.2K/s` / `↓1.2M/s`); click for the busiest apps and quick actions |
+| Menu bar | Live up/down rates on two lines (`1.2K/s↑` / `1.2M/s↓`); click for the busiest apps and quick actions |
 | Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
 | Settings (`⌘,`) | Language, menu bar font size, sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
 

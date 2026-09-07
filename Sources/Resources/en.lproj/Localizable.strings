@@ -52,6 +52,7 @@
 "csv.header"               = "Process,Down now (B/s),Up now (B/s),Downloaded (B),Uploaded (B),Total (B)";
 
 /* ── Menu bar ── */
+"menubar.accessibility"    = "Down %1$@, up %2$@";
 "menubar.noActivity"       = "No network activity";
 "menubar.openMainWindow"   = "Open main window";
 "menubar.startCollecting"  = "Start collecting";
@@ -109,6 +110,7 @@
 "settings.dbSize"          = "Database size";
 "settings.calculating"     = "Calculating…";
 "settings.autoCleanup"     = "Automatic cleanup";
+"settings.autoCleanup.help"  = "Delete detail rows past the retention period and compact the file";
 "settings.retentionDays"   = "Keep for";
 "settings.days"            = "%d days";
 "settings.cleanNow"        = "Clean now";

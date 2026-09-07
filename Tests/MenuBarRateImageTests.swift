@@ -76,6 +76,13 @@ final class MenuBarRateImageTests: XCTestCase {
         XCTAssertGreaterThan(bottom, 10, "下半部分没有内容")
     }
 
+    /// 图片里是文字，但对 VoiceOver 而言只是一张图 —— 必须有可读描述
+    func testImageCarriesAccessibilityDescription() throws {
+        let description = try XCTUnwrap(render(1_234, 1_234_567).accessibilityDescription)
+        XCTAssertFalse(description.isEmpty)
+        XCTAssertTrue(description.contains("/s"), "描述里应包含速率读数: \(description)")
+    }
+
     /// 把各字号渲染成 PNG 落盘，便于人工核对外观
     func testExportSamplesForVisualReview() throws {
         guard let dir = ProcessInfo.processInfo.environment["MENUBAR_SAMPLE_DIR"] else {

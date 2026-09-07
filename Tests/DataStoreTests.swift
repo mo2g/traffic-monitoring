@@ -287,3 +287,103 @@ final class FullPipelineIntegrationTests: XCTestCase {
         XCTAssertEqual(chrome!.totalOut, 300_000)
     }
 }
+
+// ============================================================
+// MARK: - 数据库文件整理
+// ============================================================
+
+/// SQLite 删除行只把页挂到 freelist，文件不会缩小。
+/// 这组测试验证「浪费明显时才整理、整理后确实变小」。
+final class DatabaseCompactionTests: XCTestCase {
+    private var store: DataStore!
+    private var url: URL!
+
+    override func setUp() async throws {
+        url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("compact-\(UUID().uuidString).db")
+        store = DataStore()
+        try await store.setup(at: url)
+    }
+
+    override func tearDown() async throws {
+        for suffix in ["", "-wal", "-shm"] {
+            try? FileManager.default.removeItem(
+                at: url.deletingLastPathComponent()
+                    .appendingPathComponent(url.lastPathComponent + suffix))
+        }
+    }
+
+    private func fill(_ count: Int, daysAgo: Double) async throws {
+        let base = Date().timeIntervalSince1970 - daysAgo * 86_400
+        let events = (0..<count).map { i in
+            TrafficEvent(id: nil, timestamp: base + Double(i), interval: 60,
+                         processKey: "proc\(i % 40)", bundleId: nil,
+                         displayName: "填充用的长名字以便撑大页面 \(i)",
+                         bytesIn: Int64(i), bytesOut: Int64(i))
+        }
+        try await store.insertEvents(events)
+    }
+
+    /// 删掉绝大部分行之后，整理必须真的把空间还给系统
+    func testCompactReclaimsSpaceAfterLargeDelete() async throws {
+        try await fill(20_000, daysAgo: 90)
+        try await fill(200, daysAgo: 0)
+        try await store.checkpoint()
+        let filled = await store.databaseSize()
+
+        try await store.pruneExpired(retentionDays: 30)
+        try await store.checkpoint()
+        let afterDelete = await store.databaseSize()
+        // 关键：只删不整理，文件一点没小 —— 这正是需要 VACUUM 的原因
+        XCTAssertEqual(afterDelete, filled, "仅删除不会把空间还给系统")
+
+        let reclaimed = try await store.compactIfWasteful()
+        let afterCompact = await store.databaseSize()
+        XCTAssertGreaterThan(reclaimed, 0, "浪费明显时应当有回收")
+        XCTAssertLessThan(afterCompact, afterDelete / 2, "整理后文件应大幅缩小")
+        XCTAssertEqual(reclaimed, filled - afterCompact, "回收量应等于实际缩小量")
+    }
+
+    /// VACUUM 会把整个新库写进 WAL；不再 checkpoint 一次的话，
+    /// 主库虽然缩了、WAL 却撑得更大，总占用反而上升。
+    func testCompactAlsoTruncatesWriteAheadLog() async throws {
+        try await fill(20_000, daysAgo: 90)
+        try await fill(200, daysAgo: 0)
+        try await store.pruneExpired(retentionDays: 30)
+        _ = try await store.compactIfWasteful()
+
+        let walPath = url.path + "-wal"
+        let walSize = (try? FileManager.default.attributesOfItem(atPath: walPath))?[.size] as? Int64 ?? 0
+        XCTAssertLessThan(walSize, 1 << 20, "整理后 WAL 应已被截断")
+    }
+
+    /// 数据紧凑时不该白白重写整个文件
+    func testCompactIsNoOpWhenDatabaseIsDense() async throws {
+        try await fill(2_000, daysAgo: 0)
+        let reclaimed = try await store.compactIfWasteful()
+        XCTAssertEqual(reclaimed, 0, "没有明显浪费时不应触发 VACUUM")
+    }
+
+    /// 低于绝对字节阈值时也不做 —— 小库整理的收益还不够开销
+    func testCompactRespectsMinimumBytesThreshold() async throws {
+        try await fill(2_000, daysAgo: 90)
+        try await store.pruneExpired(retentionDays: 30)
+        let reclaimed = try await store.compactIfWasteful(minimumFreeBytes: 1 << 30)
+        XCTAssertEqual(reclaimed, 0)
+    }
+
+    /// 整理不能弄丢数据
+    func testCompactPreservesRemainingRows() async throws {
+        try await fill(20_000, daysAgo: 90)
+        try await fill(500, daysAgo: 1)
+        try await store.pruneExpired(retentionDays: 30)
+
+        let before = try await store.querySummary(since: 0)
+        let beforeTotal = before.reduce(0) { $0 + $1.totalBytes }
+        _ = try await store.compactIfWasteful()
+        let after = try await store.querySummary(since: 0)
+
+        XCTAssertEqual(after.count, before.count)
+        XCTAssertEqual(after.reduce(0) { $0 + $1.totalBytes }, beforeTotal)
+    }
+}

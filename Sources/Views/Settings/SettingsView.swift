@@ -9,8 +9,8 @@ struct SettingsView: View {
     @State private var selectedInterval: TimeInterval = Preferences.interval
     @State private var selectedSaveInterval: TimeInterval = Preferences.saveInterval
     @State private var dbSize: String = L("settings.calculating")
-    @State private var retentionDays: Double = 30
-    @State private var retentionEnabled: Bool = false
+    @State private var retentionDays: Double = Preferences.retentionDays
+    @State private var retentionEnabled: Bool = Preferences.retentionEnabled
     @State private var excludedProcesses: String = Preferences.excludedProcessesText
     // 注意：这些 @State 的初值表达式在**每次**构造 SettingsView 时都会执行，
     // 而 SwiftUI 每次求值 App.body 都会重新构造一遍 Scene 的内容视图。
@@ -120,6 +120,10 @@ struct SettingsView: View {
 
                     LabeledContent(L("settings.autoCleanup")) {
                         Toggle("", isOn: $retentionEnabled)
+                            .onChange(of: retentionEnabled) { _, on in
+                                Preferences.retentionEnabled = on
+                            }
+                            .help(L("settings.autoCleanup.help"))
                     }
 
                     if retentionEnabled {
@@ -129,6 +133,9 @@ struct SettingsView: View {
                                     .monospacedDigit()
                                 Stepper("", value: $retentionDays, in: 7...90, step: 1)
                                     .labelsHidden()
+                                    .onChange(of: retentionDays) { _, days in
+                                        Preferences.retentionDays = days
+                                    }
                             }
                         }
 
@@ -410,9 +417,11 @@ struct SettingsView: View {
     }
 
     private func deleteOldData() {
-        let cutoff = Date().timeIntervalSince1970 - retentionDays * 86400
         Task {
-            try? await DataStore.shared.deleteBefore(cutoff)
+            try? await DataStore.shared.pruneExpired(retentionDays: retentionDays)
+            // 手动清理后也整理文件，否则「清理了但数据库大小没变」看着像没生效
+            _ = try? await DataStore.shared.compactIfWasteful()
+            updateDBSize()
         }
     }
 }

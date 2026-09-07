@@ -52,6 +52,7 @@
 "csv.header"               = "进程,实时下载(B/s),实时上传(B/s),下载(B),上传(B),合计(B)";
 
 /* ── 菜单栏 ── */
+"menubar.accessibility"    = "下行 %1$@，上行 %2$@";
 "menubar.noActivity"       = "当前没有网络活动";
 "menubar.openMainWindow"   = "打开主窗口";
 "menubar.startCollecting"  = "启动采集";
@@ -109,6 +110,7 @@
 "settings.dbSize"          = "数据库大小";
 "settings.calculating"     = "计算中…";
 "settings.autoCleanup"     = "自动清理";
+"settings.autoCleanup.help"  = "自动删除超过保留期的明细，并整理数据库文件";
 "settings.retentionDays"   = "保留天数";
 "settings.days"            = "%d 天";
 "settings.cleanNow"        = "立即清理";

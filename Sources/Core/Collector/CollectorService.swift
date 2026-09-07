@@ -113,7 +113,16 @@ final class CollectorService {
 
         do {
             try await DataStore.shared.setup()
-            try await DataStore.shared.pruneExpired()
+            if Preferences.retentionEnabled {
+                try await DataStore.shared.pruneExpired(retentionDays: Preferences.retentionDays)
+                let reclaimed = try await DataStore.shared.compactIfWasteful()
+                if reclaimed > 0 {
+                    await LogStore.shared.log(
+                        "Compacted database, reclaimed \(ByteFormatter.string(bytes: reclaimed))",
+                        level: .info, tag: "DataStore"
+                    )
+                }
+            }
         } catch {
             await LogStore.shared.log("Database init failed: \(error)", level: .error, tag: "Collector")
             status = .error(L("error.databaseInit"))
@@ -282,6 +291,8 @@ enum Preferences {
     private static let excludedKey = "com.trafficmonitor.excludedProcesses"
     private static let sparklineKey = "com.trafficmonitor.sparkline"
     private static let menuBarFontKey = "com.trafficmonitor.menuBarFontSize"
+    private static let retentionEnabledKey = "com.trafficmonitor.retentionEnabled"
+    private static let retentionDaysKey = "com.trafficmonitor.retentionDays"
 
     static var interval: TimeInterval {
         get { read(intervalKey, default: Constants.defaultInterval) }
@@ -324,6 +335,22 @@ enum Preferences {
     static var menuBarFontSize: Double {
         get { read(menuBarFontKey, default: 9) }
         set { UserDefaults.standard.set(newValue, forKey: menuBarFontKey) }
+    }
+
+    /// 是否自动清理过期数据。默认开启 —— 这与此前的实际行为一致
+    /// （启动时无条件按 30 天清理），只是过去开关是假的、UI 说关着却照清不误。
+    static var retentionEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: retentionEnabledKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: retentionEnabledKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: retentionEnabledKey) }
+    }
+
+    /// 明细数据保留天数
+    static var retentionDays: Double {
+        get { read(retentionDaysKey, default: Constants.retentionDays) }
+        set { UserDefaults.standard.set(newValue, forKey: retentionDaysKey) }
     }
 
     static var menuBarEnabled: Bool {

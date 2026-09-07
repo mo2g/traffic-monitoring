@@ -39,7 +39,7 @@ enum MenuBarRateImage {
                        fontSize: CGFloat) -> NSImage {
         let size = max(minFontSize, min(maxFontSize, fontSize))
         let font = NSFont.monospacedSystemFont(ofSize: size, weight: .medium)
-        let lines = ["↑" + text(up), "↓" + text(down)]
+        let lines = [text(up) + "↑", text(down) + "↓"]
         let width = fixedWidth(for: font)
         let total = NSSize(width: width, height: height)
 
@@ -64,6 +64,8 @@ enum MenuBarRateImage {
         }
         // 模板图 → 系统按菜单栏明暗、以及「强调色/反色」状态自动着色
         image.isTemplate = true
+        // 图片里是文字，但对 VoiceOver 而言只是一张图 —— 得显式给出可读描述
+        image.accessibilityDescription = L("menubar.accessibility", text(down), text(up))
         return image
     }
 
@@ -94,7 +96,7 @@ enum MenuBarRateImage {
             for multiplier in [1.0, 9.9, 10.0, 99.0, 999.0] {
                 let value = multiplier * pow(1024, Double(exponent))
                 for arrow in ["↑", "↓"] {
-                    let candidate = arrow + text(value) as NSString
+                    let candidate = text(value) + arrow as NSString
                     widest = max(widest, candidate.size(withAttributes: attributes).width)
                 }
             }

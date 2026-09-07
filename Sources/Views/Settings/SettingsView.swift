@@ -12,8 +12,13 @@ struct SettingsView: View {
     @State private var retentionDays: Double = 30
     @State private var retentionEnabled: Bool = false
     @State private var excludedProcesses: String = Preferences.excludedProcessesText
-    @State private var launchAtLogin: Bool = LaunchAtLogin.isEnabled
+    // 注意：这些 @State 的初值表达式在**每次**构造 SettingsView 时都会执行，
+    // 而 SwiftUI 每次求值 App.body 都会重新构造一遍 Scene 的内容视图。
+    // 所以初值必须廉价 —— LaunchAtLogin 要走 SMAppService 的 XPC，
+    // 放在这里会让主线程在场景更新时反复阻塞。真实状态在 .task 里读。
+    @State private var launchAtLogin = false
     @State private var launchAtLoginError: String?
+    @State private var launchAtLoginHint: String?
 
     var body: some View {
         TabView {
@@ -70,11 +75,11 @@ struct SettingsView: View {
                             .onChange(of: launchAtLogin) { _, want in
                                 launchAtLoginError = LaunchAtLogin.setEnabled(want)
                                 // 注册失败就把开关拨回去，别让 UI 和实际状态不一致
-                                if launchAtLoginError != nil { launchAtLogin = LaunchAtLogin.isEnabled }
+                                if launchAtLoginError != nil { refreshLaunchAtLoginState() }
                             }
                     }
 
-                    if let hint = launchAtLoginError ?? LaunchAtLogin.statusDescription {
+                    if let hint = launchAtLoginError ?? launchAtLoginHint {
                         HStack(spacing: 6) {
                             Text(hint).font(.caption).foregroundStyle(.secondary)
                             if LaunchAtLogin.requiresApproval {
@@ -171,6 +176,12 @@ struct SettingsView: View {
             .padding()
         }
         .frame(width: 500, height: 400)
+        .task { refreshLaunchAtLoginState() }
+    }
+
+    private func refreshLaunchAtLoginState() {
+        launchAtLogin = LaunchAtLogin.isEnabled
+        launchAtLoginHint = LaunchAtLogin.statusDescription
     }
 
     // MARK: - Alert Tab

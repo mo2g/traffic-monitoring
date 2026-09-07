@@ -36,7 +36,17 @@ struct TrafficMonitorApp: App {
         .windowStyle(.titleBar)
         .defaultSize(width: 900, height: 600)
 
-        MenuBarExtra(isInserted: Bindable(collectorService).menuBarEnabled) {
+        // 这里**不能**直接用 Bindable(collectorService).menuBarEnabled。
+        //
+        // MenuBarExtra 在每次场景更新时都会把当前值回写进绑定，而 @Observable
+        // 的合成 setter 无条件调用 withMutation —— 即便值没变也会通知观察者。
+        // App.body 读了这个属性，于是「求值 → 回写 → 失效 → 再求值」形成死循环，
+        // 主线程 100% 占用、界面无响应。
+        // 过滤掉同值写入，循环就断了。
+        MenuBarExtra(isInserted: Binding(
+            get: { collectorService.menuBarEnabled },
+            set: { if $0 != collectorService.menuBarEnabled { collectorService.menuBarEnabled = $0 } }
+        )) {
             MenuBarPanel()
                 .environment(collectorService)
                 .environment(dashboardVM)

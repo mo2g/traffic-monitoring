@@ -31,12 +31,18 @@ final class CollectorService {
 
     /// 采集间隔（秒）。写入即落 UserDefaults —— 此前只存在内存里，重启就回默认值。
     var interval: TimeInterval = Preferences.interval {
-        didSet { Preferences.interval = interval }
+        didSet {
+            guard interval != oldValue else { return }
+            Preferences.interval = interval
+        }
     }
 
     /// 落库间隔（秒），同样持久化
     var saveInterval: TimeInterval = Preferences.saveInterval {
-        didSet { Preferences.saveInterval = saveInterval }
+        didSet {
+            guard saveInterval != oldValue else { return }
+            Preferences.saveInterval = saveInterval
+        }
     }
 
     var alertRules: [AlertRule] = []
@@ -44,6 +50,7 @@ final class CollectorService {
     /// 表格行内显示最近速率的 sparkline（默认关闭）
     var sparklineEnabled: Bool = Preferences.sparklineEnabled {
         didSet {
+            guard sparklineEnabled != oldValue else { return }
             Preferences.sparklineEnabled = sparklineEnabled
             let enabled = sparklineEnabled
             Task { await TrafficPipeline.shared.setSparklineEnabled(enabled) }
@@ -56,6 +63,7 @@ final class CollectorService {
     /// 菜单栏的数字会冻在最后一帧。
     var menuBarEnabled: Bool = Preferences.menuBarEnabled {
         didSet {
+            guard menuBarEnabled != oldValue else { return }
             Preferences.menuBarEnabled = menuBarEnabled
             syncVisibility()
         }

@@ -256,3 +256,89 @@ final class TimeRangeBoundaryTests: XCTestCase {
         }
     }
 }
+
+// ============================================================
+// MARK: - 排除进程
+// ============================================================
+
+final class ExcludedProcessTests: XCTestCase {
+    private let pipeline = TrafficPipeline.shared
+
+    override func setUp() async throws {
+        await pipeline.reset()
+        await pipeline.setExcludedProcesses([])
+    }
+    override func tearDown() async throws {
+        await pipeline.setExcludedProcesses([])
+        await pipeline.reset()
+    }
+
+    private func feed(_ deltas: [PIDDelta]) async {
+        _ = await pipeline.ingest(TrafficFrame(deltas: [], timestamp: Date(),
+                                               interval: 0, isBaseline: true))
+        _ = await pipeline.ingest(TrafficFrame(deltas: deltas, timestamp: Date(),
+                                               interval: 2, isBaseline: false))
+    }
+
+    func testExcludedProcessIsNotCounted() async {
+        await pipeline.setExcludedProcesses(["noisy"])
+        await feed([
+            PIDDelta(pid: 999_200, execName: "noisy", bytesIn: 9_000, bytesOut: 0),
+            PIDDelta(pid: 999_201, execName: "wanted", bytesIn: 100, bytesOut: 0),
+        ])
+        let snapshot = await pipeline.makeSnapshot()
+        XCTAssertNil(snapshot.rows.first { $0.key == "noisy" })
+        XCTAssertEqual(snapshot.rows.first { $0.key == "wanted" }?.totalIn, 100)
+        XCTAssertEqual(snapshot.totalBytes, 100, "被排除的进程不应计入总数")
+    }
+
+    /// 改设置后应立即生效，不需要重启 —— 已累计的数据一并清出
+    func testSettingExclusionPurgesExistingStats() async {
+        await feed([PIDDelta(pid: 999_210, execName: "later", bytesIn: 5_000, bytesOut: 0)])
+        let before = await pipeline.makeSnapshot()
+        XCTAssertEqual(before.totalBytes, 5_000)
+
+        await pipeline.setExcludedProcesses(["later"])
+        let after = await pipeline.makeSnapshot()
+        XCTAssertNil(after.rows.first { $0.key == "later" })
+        XCTAssertEqual(after.totalBytes, 0)
+    }
+
+    func testMatchingIsCaseInsensitive() async {
+        await pipeline.setExcludedProcesses(["mdnsresponder"])
+        await feed([PIDDelta(pid: 999_220, execName: "mDNSResponder", bytesIn: 500, bytesOut: 0)])
+        let snapshot = await pipeline.makeSnapshot()
+        XCTAssertTrue(snapshot.rows.isEmpty)
+    }
+
+    func testNonMatchingNameIsUnaffected() async {
+        await pipeline.setExcludedProcesses(["something-else"])
+        await feed([PIDDelta(pid: 999_230, execName: "keepme", bytesIn: 42, bytesOut: 0)])
+        let snapshot = await pipeline.makeSnapshot()
+        XCTAssertEqual(snapshot.rows.first { $0.key == "keepme" }?.totalIn, 42)
+    }
+}
+
+// ============================================================
+// MARK: - 排除列表解析
+// ============================================================
+
+final class ExcludedListParsingTests: XCTestCase {
+    func testSplitsOnCommasAndNewlines() {
+        let parsed = Preferences.parseExcluded("a, b，c\nd")
+        XCTAssertEqual(parsed, ["a", "b", "c", "d"], "半角逗号、全角逗号、换行都应作为分隔符")
+    }
+
+    func testTrimsAndLowercases() {
+        XCTAssertEqual(Preferences.parseExcluded("  mDNSResponder  ,  WeChat "),
+                       ["mdnsresponder", "wechat"])
+    }
+
+    func testDropsEmptyEntries() {
+        XCTAssertEqual(Preferences.parseExcluded(",,  ,a,"), ["a"])
+    }
+
+    func testEmptyInputYieldsEmptySet() {
+        XCTAssertTrue(Preferences.parseExcluded("   ").isEmpty)
+    }
+}

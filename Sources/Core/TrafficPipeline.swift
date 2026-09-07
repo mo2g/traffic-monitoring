@@ -40,6 +40,11 @@ actor TrafficPipeline {
     /// 桶里已聚合但还没写库的行数（用于日志/诊断）
     private(set) var pendingRowCount = 0
 
+    /// 用户手动排除的进程（小写）。与 `Constants.alwaysExcludedProcesses` 的区别是：
+    /// 后者在 `SourceLedger` 里按可执行名过滤，这里还能匹配本地化展示名
+    /// （用户看到的是「微信」，未必知道进程名叫 WeChat）。
+    private var excludedProcesses: Set<String> = []
+
     private var alertRules: [AlertRule] = []
     private var alertThrottle: [String: Date] = [:]
     private let alertThrottleInterval: TimeInterval = 60
@@ -106,6 +111,23 @@ actor TrafficPipeline {
 
     func setAlertRules(_ rules: [AlertRule]) { alertRules = rules }
 
+    /// 设置排除列表，并把已经累计的数据清出去（否则改完设置得重启才生效）
+    func setExcludedProcesses(_ names: Set<String>) {
+        excludedProcesses = names
+        guard !names.isEmpty else { return }
+        for (key, s) in stats where isExcluded(s.identity) {
+            stats.removeValue(forKey: key)
+            for bucket in buckets.keys { buckets[bucket]?.removeValue(forKey: key) }
+        }
+        lastPushedAt = .distantPast
+    }
+
+    private func isExcluded(_ identity: ProcessIdentifier) -> Bool {
+        guard !excludedProcesses.isEmpty else { return false }
+        return excludedProcesses.contains(identity.execName.lowercased())
+            || excludedProcesses.contains(identity.displayName.lowercased())
+    }
+
     func reset() {
         stats.removeAll()
         buckets.removeAll()
@@ -123,7 +145,16 @@ actor TrafficPipeline {
     func ingest(_ frame: TrafficFrame) -> DashboardSnapshot? {
         // 首帧的「增量」是各连接自建立以来的累计值，只用来建立基线和活跃进程集合
         guard !frame.isBaseline else {
-            for d in frame.deltas { _ = ensureStats(pid: d.pid, execName: d.execName) }
+            for d in frame.deltas {
+                let identity = resolver.identity(pid: d.pid, execName: d.execName)
+                guard !isExcluded(identity) else { continue }
+                if stats[identity.key] == nil {
+                    stats[identity.key] = ProcessStats(
+                        identity: identity,
+                        icon: IconCatalog.icon(for: identity.displayName)
+                    )
+                }
+            }
             return pushIfDue(at: frame.timestamp)
         }
 
@@ -140,6 +171,7 @@ actor TrafficPipeline {
 
         for d in frame.deltas {
             let identity = resolver.identity(pid: d.pid, execName: d.execName)
+            guard !isExcluded(identity) else { continue }
             let key = identity.key
             if let cur = aggregated[key] {
                 aggregated[key] = (cur.bytesIn + d.bytesIn, cur.bytesOut + d.bytesOut, cur.identity)
@@ -193,17 +225,6 @@ actor TrafficPipeline {
         guard now.timeIntervalSince(lastPushedAt) >= Constants.uiRefreshInterval else { return nil }
         lastPushedAt = now
         return makeSnapshot()
-    }
-
-    private func ensureStats(pid: Int32, execName: String) -> ProcessIdentifier {
-        let identity = resolver.identity(pid: pid, execName: execName)
-        if stats[identity.key] == nil {
-            stats[identity.key] = ProcessStats(
-                identity: identity,
-                icon: IconCatalog.icon(for: identity.displayName)
-            )
-        }
-        return identity
     }
 
     // MARK: - UI 快照

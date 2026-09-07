@@ -11,7 +11,7 @@ struct SettingsView: View {
     @State private var dbSize: String = "计算中..."
     @State private var retentionDays: Double = 30
     @State private var retentionEnabled: Bool = false
-    @State private var excludedProcesses: String = ""
+    @State private var excludedProcesses: String = Preferences.excludedProcessesText
 
     var body: some View {
         TabView {
@@ -92,8 +92,11 @@ struct SettingsView: View {
 
                 Section {
                     LabeledContent("排除进程") {
-                        TextField("用逗号分隔进程名", text: $excludedProcesses)
+                        TextField("用逗号分隔，回车生效", text: $excludedProcesses)
+                            .onSubmit { collectorService.applyExcludedProcesses(excludedProcesses) }
                     }
+                    Text("按进程名或显示名精确匹配（不区分大小写），例如 `mDNSResponder, 微信`。\n生效后已统计的数据会一并清除。")
+                        .font(.caption).foregroundStyle(.secondary)
                 } header: {
                     Text("高级")
                 }

@@ -90,6 +90,8 @@ final class CollectorService {
         self.collector = collector
 
         // 历史累计先灌进管线，再开始消费实时帧
+        await TrafficPipeline.shared.setExcludedProcesses(
+            Preferences.parseExcluded(Preferences.excludedProcessesText))
         await applyTimeRange(Preferences.timeRange)
         await TrafficPipeline.shared.setAlertRules(alertRules)
 
@@ -140,6 +142,13 @@ final class CollectorService {
             "统计窗口切换为「\(range.rawValue)」，载入 \(summaries.count) 条历史",
             level: .info, tag: "Collector"
         )
+    }
+
+    /// 应用「排除进程」列表：立即生效，已累计的数据一并清出
+    func applyExcludedProcesses(_ text: String) {
+        Preferences.excludedProcessesText = text
+        let names = Preferences.parseExcluded(text)
+        Task { await TrafficPipeline.shared.setExcludedProcesses(names) }
     }
 
     func loadAlertRules() {
@@ -231,6 +240,7 @@ enum Preferences {
     private static let saveIntervalKey = "com.trafficmonitor.saveInterval"
     private static let menuBarKey = "com.trafficmonitor.menuBarEnabled"
     private static let timeRangeKey = "com.trafficmonitor.timeRange"
+    private static let excludedKey = "com.trafficmonitor.excludedProcesses"
 
     static var interval: TimeInterval {
         get { read(intervalKey, default: Constants.defaultInterval) }
@@ -248,6 +258,19 @@ enum Preferences {
             return DashboardViewModel.TimeRange(rawValue: raw) ?? .today
         }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: timeRangeKey) }
+    }
+
+    /// 用户手动排除的进程名（原样保存，便于回显到输入框）
+    static var excludedProcessesText: String {
+        get { UserDefaults.standard.string(forKey: excludedKey) ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: excludedKey) }
+    }
+
+    /// 解析成用于比对的小写集合
+    static func parseExcluded(_ text: String) -> Set<String> {
+        Set(text.components(separatedBy: CharacterSet(charactersIn: ",，\n"))
+            .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
+            .filter { !$0.isEmpty })
     }
 
     static var menuBarEnabled: Bool {

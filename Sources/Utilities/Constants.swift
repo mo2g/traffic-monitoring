@@ -46,6 +46,9 @@ enum Constants {
     /// 明细数据保留天数，超期在启动时清理
     static let retentionDays: Double = 30
 
+    /// 行内 sparkline 保留多少帧
+    static let sparklineSampleCount = 40
+
     /// SourceLedger 里 PID→名字 映射的上限，超过则回收已退出进程
     static let maxTrackedProcessNames = 2048
 

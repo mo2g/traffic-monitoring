@@ -214,8 +214,16 @@ private struct SummaryRow: View {
 @MainActor
 private struct ContentTable: View {
     @Environment(DashboardViewModel.self) private var dashboard
+    @Environment(CollectorService.self) private var collector
     @Binding var selection: String?
     let onOpenDetail: (ProcessRow) -> Void
+
+    /// 关闭时把列宽和标题都压成空，让这一列实际上消失。
+    ///
+    /// 本来该用 `@TableColumnBuilder` 的条件列直接不声明它，但 `buildIf`
+    /// 要求 macOS 14.4+，而本项目部署目标是 14.0 —— 为一个装饰性的列抬高
+    /// 系统要求不划算。
+    private var sparklineWidth: CGFloat { collector.sparklineEnabled ? 70 : 0 }
 
     var body: some View {
         if dashboard.isGroupedView {
@@ -231,8 +239,16 @@ private struct ContentTable: View {
 @MainActor
 private struct ProcessTableView: View {
     @Environment(DashboardViewModel.self) private var dashboard
+    @Environment(CollectorService.self) private var collector
     @Binding var selection: String?
     let onOpenDetail: (ProcessRow) -> Void
+
+    /// 关闭时把列宽和标题都压成空，让这一列实际上消失。
+    ///
+    /// 本来该用 `@TableColumnBuilder` 的条件列直接不声明它，但 `buildIf`
+    /// 要求 macOS 14.4+，而本项目部署目标是 14.0 —— 为一个装饰性的列抬高
+    /// 系统要求不划算。
+    private var sparklineWidth: CGFloat { collector.sparklineEnabled ? 70 : 0 }
 
     var body: some View {
         @Bindable var dashboard = dashboard
@@ -281,6 +297,13 @@ private struct ProcessTableView: View {
                         .fontWeight(.medium).monospacedDigit()
                 }
                 .width(min: 75)
+
+                TableColumn(collector.sparklineEnabled ? "趋势" : "") { row in
+                    if collector.sparklineEnabled {
+                        Sparkline(values: row.spark)
+                    }
+                }
+                .width(min: 0, ideal: sparklineWidth, max: sparklineWidth)
             }
             // primaryAction 即双击。此前是「单击即弹模态框」，导致想排序或选行
             // 都会被详情窗打断。

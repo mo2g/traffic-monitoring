@@ -77,3 +77,43 @@ extension ProcessIcon {
                   fallbackSymbol: row.icon, size: size)
     }
 }
+
+// MARK: - 行内 Sparkline
+
+/// 表格行里的迷你速率曲线。
+///
+/// 刻意用 `Canvas` 手绘而不是 Swift Charts：Charts 每张图要建一整棵视图树
+/// 和坐标系，用在几百行的表格里代价过高。这里只有两条 Path，
+/// 一次绘制调用，没有子视图。
+struct Sparkline: View {
+    let values: [Double]
+    var tint: Color = .accentColor
+
+    var body: some View {
+        Canvas(opaque: false, rendersAsynchronously: false) { context, size in
+            guard values.count >= 2 else { return }
+            let peak = values.max() ?? 0
+            guard peak > 0 else { return }
+
+            let step = size.width / CGFloat(values.count - 1)
+            var line = Path()
+            for (i, v) in values.enumerated() {
+                let point = CGPoint(
+                    x: CGFloat(i) * step,
+                    y: size.height - CGFloat(v / peak) * size.height
+                )
+                i == 0 ? line.move(to: point) : line.addLine(to: point)
+            }
+
+            // 填充区域让低速段也看得见形状
+            var area = line
+            area.addLine(to: CGPoint(x: size.width, y: size.height))
+            area.addLine(to: CGPoint(x: 0, y: size.height))
+            area.closeSubpath()
+            context.fill(area, with: .color(tint.opacity(0.16)))
+            context.stroke(line, with: .color(tint), lineWidth: 1)
+        }
+        .frame(height: 16)
+        .accessibilityHidden(true)
+    }
+}

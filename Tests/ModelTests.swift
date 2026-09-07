@@ -135,7 +135,7 @@ final class ProcessRowSortTests: XCTestCase {
                      rx: Double = 0, tx: Double = 0) -> ProcessRow {
         ProcessRow(key: name, bundleId: nil, displayName: name, icon: "app.dashed",
                    iconPath: nil,
-                   totalIn: bytesIn, totalOut: bytesOut, rxRate: rx, txRate: tx)
+                   totalIn: bytesIn, totalOut: bytesOut, rxRate: rx, txRate: tx, spark: [])
     }
 
     func testSortByTotalBytesDescending() {

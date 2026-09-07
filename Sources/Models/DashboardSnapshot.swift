@@ -17,6 +17,8 @@ struct ProcessRow: Identifiable, Equatable {
     let totalOut: Int64
     let rxRate: Double
     let txRate: Double
+    /// 最近若干帧的总速率，用于行内 sparkline。关闭该功能时为空数组。
+    let spark: [Double]
 
     var totalBytes: Int64 { totalIn + totalOut }
 }

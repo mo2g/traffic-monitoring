@@ -59,6 +59,11 @@ struct SettingsView: View {
                             .help("在菜单栏常驻显示实时上下行速率")
                     }
 
+                    LabeledContent("行内趋势图") {
+                        Toggle("", isOn: Bindable(collectorService).sparklineEnabled)
+                            .help("在表格里为每个进程显示最近速率的迷你曲线")
+                    }
+
                     LabeledContent("开机启动") {
                         Toggle("", isOn: $launchAtLogin)
                             .disabled(!LaunchAtLogin.isSupported)

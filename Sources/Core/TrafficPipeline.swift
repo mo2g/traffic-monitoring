@@ -16,6 +16,8 @@ struct ProcessStats {
     var rxRate: Double = 0
     var txRate: Double = 0
     var sampleCount: Int = 0
+    /// 最近若干帧的总速率（sparkline 用）。功能关闭时始终为空，不占内存。
+    var history: [Double] = []
 
     var totalIn: Int64 { historicalIn + liveIn }
     var totalOut: Int64 { historicalOut + liveOut }
@@ -44,6 +46,10 @@ actor TrafficPipeline {
     /// 后者在 `SourceLedger` 里按可执行名过滤，这里还能匹配本地化展示名
     /// （用户看到的是「微信」，未必知道进程名叫 WeChat）。
     private var excludedProcesses: Set<String> = []
+
+    /// 行内 sparkline 开关。关闭时完全不维护历史缓冲 ——
+    /// 默认关闭，因为每行多一张图会把好不容易压下去的渲染成本吃回去一部分。
+    private var sparklineEnabled = false
 
     private var alertRules: [AlertRule] = []
     private var alertThrottle: [String: Date] = [:]
@@ -110,6 +116,15 @@ actor TrafficPipeline {
     }
 
     func setAlertRules(_ rules: [AlertRule]) { alertRules = rules }
+
+    func setSparklineEnabled(_ enabled: Bool) {
+        guard enabled != sparklineEnabled else { return }
+        sparklineEnabled = enabled
+        if !enabled {
+            for key in stats.keys { stats[key]?.history = [] }
+        }
+        lastPushedAt = .distantPast
+    }
 
     /// 设置排除列表，并把已经累计的数据清出去（否则改完设置得重启才生效）
     func setExcludedProcesses(_ names: Set<String>) {
@@ -191,6 +206,7 @@ actor TrafficPipeline {
             s.rxRate = Double(v.bytesIn) / interval
             s.txRate = Double(v.bytesOut) / interval
             s.sampleCount += 1
+            if sparklineEnabled { Self.push(s.rxRate + s.txRate, into: &s.history) }
             stats[key] = s
 
             // 分桶聚合，稍后批量落库
@@ -203,9 +219,10 @@ actor TrafficPipeline {
 
         // 未出现在本帧的进程速率清零（否则表格会一直显示上一次的速率）
         for (key, var s) in stats where !touched.contains(key) {
-            guard s.rxRate != 0 || s.txRate != 0 else { continue }
+            guard s.rxRate != 0 || s.txRate != 0 || !s.history.isEmpty else { continue }
             s.rxRate = 0
             s.txRate = 0
+            if sparklineEnabled { Self.push(0, into: &s.history) }
             stats[key] = s
         }
 
@@ -225,6 +242,15 @@ actor TrafficPipeline {
         guard now.timeIntervalSince(lastPushedAt) >= Constants.uiRefreshInterval else { return nil }
         lastPushedAt = now
         return makeSnapshot()
+    }
+
+    /// 定长环形缓冲。用 `removeFirst()` 而不是真环形是因为长度只有几十，
+    /// 这点搬移成本远低于维护读写指针的复杂度。
+    private static func push(_ value: Double, into history: inout [Double]) {
+        history.append(value)
+        if history.count > Constants.sparklineSampleCount {
+            history.removeFirst(history.count - Constants.sparklineSampleCount)
+        }
     }
 
     // MARK: - UI 快照
@@ -247,7 +273,8 @@ actor TrafficPipeline {
                 totalIn: s.totalIn,
                 totalOut: s.totalOut,
                 rxRate: s.rxRate,
-                txRate: s.txRate
+                txRate: s.txRate,
+                spark: s.history
             ))
         }
         rows.sort { $0.totalBytes > $1.totalBytes }

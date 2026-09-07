@@ -342,3 +342,68 @@ final class ExcludedListParsingTests: XCTestCase {
         XCTAssertTrue(Preferences.parseExcluded("   ").isEmpty)
     }
 }
+
+// ============================================================
+// MARK: - 行内 Sparkline
+// ============================================================
+
+/// 默认关闭，开启后才维护历史缓冲。
+final class SparklineTests: XCTestCase {
+    private let pipeline = TrafficPipeline.shared
+
+    override func setUp() async throws {
+        await pipeline.reset()
+        await pipeline.setSparklineEnabled(false)
+    }
+    override func tearDown() async throws {
+        await pipeline.setSparklineEnabled(false)
+        await pipeline.reset()
+    }
+
+    private func tick(_ bytesIn: Int64, at offset: TimeInterval) async {
+        _ = await pipeline.ingest(TrafficFrame(
+            deltas: [PIDDelta(pid: 999_300, execName: "sp", bytesIn: bytesIn, bytesOut: 0)],
+            timestamp: Date().addingTimeInterval(offset), interval: 2, isBaseline: false))
+    }
+
+    private func spark() async -> [Double] {
+        await pipeline.makeSnapshot().rows.first { $0.key == "sp" }?.spark ?? []
+    }
+
+    func testDisabledKeepsHistoryEmpty() async {
+        for i in 0..<5 { await tick(1_000, at: Double(i) * 2) }
+        let values = await spark()
+        XCTAssertTrue(values.isEmpty, "关闭时不应维护历史缓冲")
+    }
+
+    func testEnabledAccumulatesRates() async {
+        await pipeline.setSparklineEnabled(true)
+        await tick(2_000, at: 0)     // 2000 / 2s = 1000 B/s
+        await tick(4_000, at: 2)     // 4000 / 2s = 2000 B/s
+        let values = await spark()
+        XCTAssertEqual(values.count, 2)
+        XCTAssertEqual(values[0], 1_000, accuracy: 1)
+        XCTAssertEqual(values[1], 2_000, accuracy: 1)
+    }
+
+    func testHistoryIsCapped() async {
+        await pipeline.setSparklineEnabled(true)
+        for i in 0..<(Constants.sparklineSampleCount + 25) {
+            await tick(1_000, at: Double(i) * 2)
+        }
+        let values = await spark()
+        XCTAssertEqual(values.count, Constants.sparklineSampleCount)
+    }
+
+    /// 关掉开关要把已有缓冲清干净，不能留着占内存
+    func testDisablingClearsExistingHistory() async {
+        await pipeline.setSparklineEnabled(true)
+        for i in 0..<5 { await tick(1_000, at: Double(i) * 2) }
+        let before = await spark()
+        XCTAssertFalse(before.isEmpty)
+
+        await pipeline.setSparklineEnabled(false)
+        let after = await spark()
+        XCTAssertTrue(after.isEmpty)
+    }
+}

@@ -41,6 +41,15 @@ final class CollectorService {
 
     var alertRules: [AlertRule] = []
 
+    /// 表格行内显示最近速率的 sparkline（默认关闭）
+    var sparklineEnabled: Bool = Preferences.sparklineEnabled {
+        didSet {
+            Preferences.sparklineEnabled = sparklineEnabled
+            let enabled = sparklineEnabled
+            Task { await TrafficPipeline.shared.setSparklineEnabled(enabled) }
+        }
+    }
+
     /// 菜单栏常驻显示实时速率
     ///
     /// 开启时 UI 可见性闸门必须一直放行 —— 否则主窗口被遮挡后管线停止产出快照，
@@ -92,6 +101,7 @@ final class CollectorService {
         // 历史累计先灌进管线，再开始消费实时帧
         await TrafficPipeline.shared.setExcludedProcesses(
             Preferences.parseExcluded(Preferences.excludedProcessesText))
+        await TrafficPipeline.shared.setSparklineEnabled(sparklineEnabled)
         await applyTimeRange(Preferences.timeRange)
         await TrafficPipeline.shared.setAlertRules(alertRules)
 
@@ -241,6 +251,7 @@ enum Preferences {
     private static let menuBarKey = "com.trafficmonitor.menuBarEnabled"
     private static let timeRangeKey = "com.trafficmonitor.timeRange"
     private static let excludedKey = "com.trafficmonitor.excludedProcesses"
+    private static let sparklineKey = "com.trafficmonitor.sparkline"
 
     static var interval: TimeInterval {
         get { read(intervalKey, default: Constants.defaultInterval) }
@@ -271,6 +282,12 @@ enum Preferences {
         Set(text.components(separatedBy: CharacterSet(charactersIn: ",，\n"))
             .map { $0.trimmingCharacters(in: .whitespaces).lowercased() }
             .filter { !$0.isEmpty })
+    }
+
+    /// 行内 sparkline，默认关闭
+    static var sparklineEnabled: Bool {
+        get { UserDefaults.standard.bool(forKey: sparklineKey) }
+        set { UserDefaults.standard.set(newValue, forKey: sparklineKey) }
     }
 
     static var menuBarEnabled: Bool {

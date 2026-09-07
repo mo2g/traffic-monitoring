@@ -31,11 +31,16 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/TrafficMonitor "$APP/Contents/MacOS/TrafficMonitor"
 
-# 本地化资源包：SwiftPM 把 .lproj 打进 TrafficMonitor_TrafficMonitor.bundle，
-# 必须放在可执行文件**旁边** —— Bundle.module 就是这么定位的。
+# 本地化资源包：SwiftPM 把 .lproj 打进 TrafficMonitor_TrafficMonitor.bundle。
+#
+# 必须放 Contents/Resources/，**不能**放 Contents/MacOS/ —— 后者会被 codesign
+# 当作未签名的嵌套代码而整个签名失败：
+#   "code object is not signed at all
+#    In subcomponent: .../Contents/MacOS/TrafficMonitor_TrafficMonitor.bundle"
+# 放在 Resources 下，Bundle.module 经由 Bundle.main.resourceURL 一样能找到。
 BUNDLE=".build/release/TrafficMonitor_TrafficMonitor.bundle"
 if [[ -d "$BUNDLE" ]]; then
-    cp -R "$BUNDLE" "$APP/Contents/MacOS/"
+    cp -R "$BUNDLE" "$APP/Contents/Resources/"
 else
     echo "  ⚠️  $BUNDLE 缺失，界面将只有英文兜底"
 fi
@@ -83,7 +88,7 @@ plutil -lint "$APP/Contents/Info.plist" > /dev/null
 
 # Ad-hoc 签名：让 macOS 认这是一个合法 bundle（本地自用足够，不用于分发）
 echo "▸ Ad-hoc 签名"
-codesign --force --sign - --timestamp=none "$APP" 2>/dev/null
+codesign --force --sign - --timestamp=none "$APP"
 codesign --verify --deep --strict "$APP"
 
 echo "✓ $APP"

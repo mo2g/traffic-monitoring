@@ -21,8 +21,12 @@ this project uses [Semantic Versioning](https://semver.org/).
     **小写**成 `zh-hans.lproj`，之后 `Bundle.preferredLocalizations` 再也匹配不上，
     永远回落英文。
   - 语言匹配也自己做，不依赖 `preferredLocalizations`。
-- `make-app.sh` 把本地化资源包复制到可执行文件旁（`Bundle.module` 的定位方式），
-  并在 `Info.plist` 声明 `CFBundleLocalizations`。
+- `make-app.sh` 把本地化资源包复制进 `Contents/Resources/` 并声明
+  `CFBundleLocalizations`。
+  资源包**不能**放 `Contents/MacOS/` —— codesign 会把它当作未签名的嵌套代码，
+  导致整个 .app 签名失败（`code object is not signed at all / In subcomponent: …`）。
+  这个错误此前被脚本里的 `2>/dev/null` 吞掉，签名失败时只表现为静默退出；
+  该重定向已移除。
 - README 补上英文界面截图。
 
 ### Changed

@@ -27,6 +27,24 @@ enum ByteFormatter {
             .replacingOccurrences(of: " ", with: "")
     }
 
+    /// 菜单栏用的紧凑速率，**恒定 5 个字符**（如 " 1.2M"、" 999K"、"    0"）
+    ///
+    /// 定长是硬要求：菜单栏标签每秒刷新，宽度一变 NSStatusItem 就要重新测量，
+    /// 既会让整条菜单栏抖动，也会触发 AppKit 的布局递归警告。
+    static func rateStringCompact(bytesPerSecond: Double) -> String {
+        let units = ["", "K", "M", "G", "T"]
+        var value = bytesPerSecond
+        var index = 0
+        while value >= 1000, index < units.count - 1 {
+            value /= 1024
+            index += 1
+        }
+        let text = index == 0
+            ? String(format: "%.0f", value)
+            : String(format: value >= 10 ? "%.0f" : "%.1f", value) + units[index]
+        return String(repeating: " ", count: max(0, 5 - text.count)) + text
+    }
+
     /// 格式化为速率形式（如 "1.2 MB/s"）
     static func rateString(bytesPerSecond: Double) -> String {
         if bytesPerSecond < 1024 {

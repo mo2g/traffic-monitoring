@@ -41,6 +41,17 @@ final class CollectorService {
 
     var alertRules: [AlertRule] = []
 
+    /// 菜单栏常驻显示实时速率
+    ///
+    /// 开启时 UI 可见性闸门必须一直放行 —— 否则主窗口被遮挡后管线停止产出快照，
+    /// 菜单栏的数字会冻在最后一帧。
+    var menuBarEnabled: Bool = Preferences.menuBarEnabled {
+        didSet {
+            Preferences.menuBarEnabled = menuBarEnabled
+            syncVisibility()
+        }
+    }
+
     /// UI 快照出口，由 `DashboardViewModel` 注册
     @ObservationIgnored
     var snapshotSink: (@MainActor (DashboardSnapshot) -> Void)?
@@ -185,6 +196,11 @@ final class CollectorService {
     }
 
     private func syncVisibility() {
+        guard !menuBarEnabled else {
+            // 菜单栏在显示实时速率，快照不能停
+            Task { await TrafficPipeline.shared.setUIVisible(true) }
+            return
+        }
         let windows = NSApp.windows.filter { $0.isVisible }
         // 一个可见窗口都没有时也当作可见，避免启动早期误判导致首屏空白
         let visible = windows.isEmpty || windows.contains { $0.occlusionState.contains(.visible) }
@@ -201,6 +217,7 @@ final class CollectorService {
 enum Preferences {
     private static let intervalKey = "com.trafficmonitor.interval"
     private static let saveIntervalKey = "com.trafficmonitor.saveInterval"
+    private static let menuBarKey = "com.trafficmonitor.menuBarEnabled"
 
     static var interval: TimeInterval {
         get { read(intervalKey, default: Constants.defaultInterval) }
@@ -210,6 +227,14 @@ enum Preferences {
     static var saveInterval: TimeInterval {
         get { read(saveIntervalKey, default: Constants.batchSaveInterval) }
         set { UserDefaults.standard.set(newValue, forKey: saveIntervalKey) }
+    }
+
+    static var menuBarEnabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: menuBarKey) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: menuBarKey)
+        }
+        set { UserDefaults.standard.set(newValue, forKey: menuBarKey) }
     }
 
     /// UserDefaults 对「键不存在」和「值为 0」都返回 0，这里区分开

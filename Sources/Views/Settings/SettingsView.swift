@@ -52,9 +52,9 @@ struct SettingsView: View {
                         }
                     }
 
-                    LabeledContent("开机启动") {
-                        Toggle("", isOn: .constant(false)).disabled(true)
-                            .help("尚未实现")
+                    LabeledContent("菜单栏显示速率") {
+                        Toggle("", isOn: Bindable(collectorService).menuBarEnabled)
+                            .help("在菜单栏常驻显示实时上下行速率")
                     }
                 } header: {
                     Text("采集设置")

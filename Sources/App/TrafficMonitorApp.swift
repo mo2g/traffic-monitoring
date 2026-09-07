@@ -13,7 +13,7 @@ struct TrafficMonitorApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: MainWindowID.value) {
             MainWindowView()
                 .environment(collectorService)
                 .environment(dashboardVM)
@@ -35,6 +35,15 @@ struct TrafficMonitorApp: App {
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 900, height: 600)
+
+        MenuBarExtra(isInserted: Bindable(collectorService).menuBarEnabled) {
+            MenuBarPanel()
+                .environment(collectorService)
+                .environment(dashboardVM)
+        } label: {
+            MenuBarLabel().environment(dashboardVM)
+        }
+        .menuBarExtraStyle(.window)
 
         Settings {
             SettingsView()

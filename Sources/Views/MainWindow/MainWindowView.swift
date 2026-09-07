@@ -29,9 +29,6 @@ struct MainWindowView: View {
                 ContentTable(selection: $selectedProcessKey, onOpenDetail: { detailTarget = $0 })
             }
         }
-        .searchable(text: Bindable(dashboard).searchText,
-                    placement: .toolbar,
-                    prompt: "搜索进程")
         .toolbar { toolbarContent }
         .sheet(item: $detailTarget, onDismiss: { selectedProcessKey = nil }) { row in
             DetailWindow(row: row)
@@ -73,10 +70,40 @@ struct MainWindowView: View {
 
             Spacer()
 
+            searchField
+
             Button { exportDocument = CSVDocument(rows: dashboard.rows) } label: {
                 Label("导出", systemImage: "square.and.arrow.up")
             }.help("导出 CSV")
         }
+    }
+
+    /// 自己拼一个搜索框，而不是用 `.searchable(placement: .toolbar)`。
+    ///
+    /// 后者会插入 `NSSearchToolbarItemView`，而它的 `updateConstraints` 内部又去调
+    /// `animateToolbarUpdates → layoutSubtreeIfNeeded`，在约束更新过程中重入布局，
+    /// AppKit 会打印
+    /// "It's not legal to call -layoutSubtreeIfNeeded on a view which is already being laid out"。
+    /// 用栈定位到 `-[NSSearchToolbarItemView _updateMinWidthConstraints:]` 后换成普通 TextField。
+    private var searchField: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11)).foregroundStyle(.secondary)
+            TextField("搜索进程", text: Bindable(dashboard).searchText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .frame(width: 130)
+            if !dashboard.searchText.isEmpty {
+                Button { dashboard.searchText = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 7).padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.6)))
+        .frame(width: 190, alignment: .leading)
     }
 
     private var statusColor: Color {

@@ -54,7 +54,10 @@ struct TrafficMonitorApp: App {
                 .environment(collectorService)
                 .environment(dashboardVM)
         } label: {
-            MenuBarLabel().environment(dashboardVM)
+            // 两个环境对象都要注入：标签既读速率（dashboardVM），也读字号（collectorService）
+            MenuBarLabel()
+                .environment(dashboardVM)
+                .environment(collectorService)
         }
         .menuBarExtraStyle(.window)
 

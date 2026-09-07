@@ -100,6 +100,8 @@
 "settings.language.hint"   = "Takes effect immediately.";
 "settings.menuBar"         = "Show rates in menu bar";
 "settings.menuBar.help"    = "Keep live up/down rates in the menu bar";
+"settings.menuBarFontSize" = "Menu bar font size";
+"settings.menuBarFontSize.help" = "Both rate lines must fit the 22pt status bar, so the range is small";
 "settings.sparkline"       = "Inline trend chart";
 "settings.sparkline.help"  = "Show a mini rate curve for each process in the table";
 "settings.launchAtLogin"   = "Launch at login";

@@ -100,6 +100,8 @@
 "settings.language.hint"   = "切换后界面立即生效。";
 "settings.menuBar"         = "菜单栏显示速率";
 "settings.menuBar.help"    = "在菜单栏常驻显示实时上下行速率";
+"settings.menuBarFontSize" = "菜单栏字号";
+"settings.menuBarFontSize.help" = "两行速率要挤进状态栏的 22pt，字号上限有限";
 "settings.sparkline"       = "行内趋势图";
 "settings.sparkline.help"  = "在表格里为每个进程显示最近速率的迷你曲线";
 "settings.launchAtLogin"   = "开机启动";

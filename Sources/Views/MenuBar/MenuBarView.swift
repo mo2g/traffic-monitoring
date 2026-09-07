@@ -3,30 +3,22 @@ import SwiftUI
 
 // MARK: - 菜单栏标签
 
-/// 菜单栏上常驻显示的上下行速率。
+/// 菜单栏上常驻显示的上下行速率，上行在上、下行在下。
 ///
-/// 两个约束决定了这里的写法：
-///
-/// 1. **宽度必须恒定**。标签每秒刷新，只要渲染宽度会变，NSStatusItem 就要在
-///    布局过程中重新测量，AppKit 会打印
-///    "It's not legal to call -layoutSubtreeIfNeeded on a view which is already
-///    being laid out"，同时整条菜单栏跟着左右抖动。
-///    所以用等宽字体 + 定长格式串 + 显式 frame 三重保证。
-/// 2. 上下两行比左右并排省一半横向空间，也是同类工具的通行做法。
-///    上行在上、下行在下，与箭头方向直觉一致。
+/// 这里给的是一张**自己画好的 NSImage**，而不是 SwiftUI 视图。
+/// 原因见 `MenuBarRateImage` 的说明：SwiftUI 会把 label 栅格化并把高度压到
+/// 16pt，两行文字放不下，只会显示一行。
 @MainActor
 struct MenuBarLabel: View {
     @Environment(DashboardViewModel.self) private var dashboard
+    @Environment(CollectorService.self) private var collector
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: -1) {
-            Text("↑" + ByteFormatter.rateStringCompact(bytesPerSecond: dashboard.totalTxRate))
-            Text("↓" + ByteFormatter.rateStringCompact(bytesPerSecond: dashboard.totalRxRate))
-        }
-        .font(.system(size: 9, weight: .medium, design: .monospaced))
-        .monospacedDigit()
-        .frame(width: 46, alignment: .trailing)
-        .fixedSize()
+        Image(nsImage: MenuBarRateImage.render(
+            upBytesPerSecond: dashboard.totalTxRate,
+            downBytesPerSecond: dashboard.totalRxRate,
+            fontSize: collector.menuBarFontSize
+        ))
     }
 }
 

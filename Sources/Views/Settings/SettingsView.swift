@@ -73,6 +73,17 @@ struct SettingsView: View {
                             .help(L("settings.menuBar.help"))
                     }
 
+                    LabeledContent(L("settings.menuBarFontSize")) {
+                        Picker("", selection: Bindable(collectorService).menuBarFontSize) {
+                            ForEach([7.0, 8.0, 9.0, 10.0, 11.0], id: \.self) { size in
+                                Text("\(Int(size))").tag(size)
+                            }
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 220)
+                        .disabled(!collectorService.menuBarEnabled)
+                        .help(L("settings.menuBarFontSize.help"))
+                    }
+
                     LabeledContent(L("settings.sparkline")) {
                         Toggle("", isOn: Bindable(collectorService).sparklineEnabled)
                             .help(L("settings.sparkline.help"))

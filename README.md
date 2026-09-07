@@ -48,7 +48,7 @@ bytes physically left through the proxy.
 
 - **Attribution that survives tunnels** — per-process, read from the kernel above `utun`
 - **Aggregation by bundle identifier** — Chrome's dozens of helper processes collapse into one row
-- **Menu bar mode** — live up/down rates in the menu bar, with a panel listing the busiest apps
+- **Menu bar mode** — live up/down rates on two lines, adjustable font size, with a panel listing the busiest apps
 - **English and Simplified Chinese** — follows the system language, or pick one in Settings
 - **Real application icons** — resolved from the process, exactly like Activity Monitor
 - **Live rates and cumulative totals** — sortable native table, updated once per second
@@ -126,9 +126,9 @@ status and a start/stop button.
 | Table | Per-app live rates and cumulative totals — click a column header to sort, **double-click** a row for its timeline, right-click for more |
 | Search | Filter by process name (`⌘F`) |
 | Sidebar | Time range (today / this week / this month) and per-app vs grouped view |
-| Menu bar | Live rates; click for the busiest apps and quick actions |
+| Menu bar | Live up/down rates on two lines (`↑1.2K/s` / `↓1.2M/s`); click for the busiest apps and quick actions |
 | Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
-| Settings (`⌘,`) | Language, sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
+| Settings (`⌘,`) | Language, menu bar font size, sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
 
 Data lives in `~/Library/Application Support/TrafficMonitor/traffic_monitor.db`.
 

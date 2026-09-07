@@ -4,6 +4,43 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] — 2026-09-07
+
+### Fixed
+
+- **菜单栏只显示一行**。此前上下行两行文字里只看得到一行（一个箭头 + 一个数值）。
+
+  原因是 SwiftUI 会把 `MenuBarExtra` 的 label 栅格化后塞进
+  `NSStatusBarButton.image`，并按菜单栏图标的惯例把高度压到 **16pt**，
+  而两行 9pt 文字需要约 21pt。用探针量到：
+
+  ```
+  NSView            frame=(0, 10.5, 60, 22)          ← 内容区确实有 22pt
+    NSStatusBarButton frame=(0, 0, 60, 22) fitting=(44, 16)   ← 只给了 16
+  ```
+
+  改为自己把两行画进一张 `NSImage` 再交给 label。图片按原尺寸透传，
+  按钮拿到完整 22pt：
+
+  ```
+    NSStatusBarButton frame=(0, 0, 57, 22) fitting=(41, 22)
+      image.size=(41, 22) template=true
+  ```
+
+  模板图由系统按菜单栏明暗自动着色。
+
+### Added
+
+- **菜单栏字号可调**（7–11pt，默认 9）。两行必须挤进状态栏的 22pt，
+  所以上限比正文小得多。
+- 速率带上 `/s` 后缀，与用户预期的 `↑1.2K/s` / `↓1.2M/s` 一致。
+
+### Changed
+
+- 菜单栏图片宽度改为「跑一遍真实格式化器取最大值」，不再手写模板串。
+  此前用 `"↑888.8M/s"` 估宽，而格式化器实际最多产出 4 位数值，
+  导致左侧留白过多（9pt 下 53px → 41px，窄了 23%）。
+
 ## [0.6.0] — 2026-09-07
 
 ### Added

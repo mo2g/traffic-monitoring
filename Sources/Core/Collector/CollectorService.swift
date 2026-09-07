@@ -70,6 +70,14 @@ final class CollectorService {
         }
     }
 
+    /// 菜单栏两行速率的字号。两行必须挤进状态栏的 22pt，所以上限比正文小得多。
+    var menuBarFontSize: Double = Preferences.menuBarFontSize {
+        didSet {
+            guard menuBarFontSize != oldValue else { return }
+            Preferences.menuBarFontSize = menuBarFontSize
+        }
+    }
+
     /// 菜单栏常驻显示实时速率
     ///
     /// 开启时 UI 可见性闸门必须一直放行 —— 否则主窗口被遮挡后管线停止产出快照，
@@ -273,6 +281,7 @@ enum Preferences {
     private static let timeRangeKey = "com.trafficmonitor.timeRange"
     private static let excludedKey = "com.trafficmonitor.excludedProcesses"
     private static let sparklineKey = "com.trafficmonitor.sparkline"
+    private static let menuBarFontKey = "com.trafficmonitor.menuBarFontSize"
 
     static var interval: TimeInterval {
         get { read(intervalKey, default: Constants.defaultInterval) }
@@ -309,6 +318,12 @@ enum Preferences {
     static var sparklineEnabled: Bool {
         get { UserDefaults.standard.bool(forKey: sparklineKey) }
         set { UserDefaults.standard.set(newValue, forKey: sparklineKey) }
+    }
+
+    /// 菜单栏两行速率的字号
+    static var menuBarFontSize: Double {
+        get { read(menuBarFontKey, default: 9) }
+        set { UserDefaults.standard.set(newValue, forKey: menuBarFontKey) }
     }
 
     static var menuBarEnabled: Bool {

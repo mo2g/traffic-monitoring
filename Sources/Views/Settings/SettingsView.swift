@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var retentionDays: Double = 30
     @State private var retentionEnabled: Bool = false
     @State private var excludedProcesses: String = Preferences.excludedProcessesText
+    @State private var launchAtLogin: Bool = LaunchAtLogin.isEnabled
+    @State private var launchAtLoginError: String?
 
     var body: some View {
         TabView {
@@ -55,6 +57,26 @@ struct SettingsView: View {
                     LabeledContent("菜单栏显示速率") {
                         Toggle("", isOn: Bindable(collectorService).menuBarEnabled)
                             .help("在菜单栏常驻显示实时上下行速率")
+                    }
+
+                    LabeledContent("开机启动") {
+                        Toggle("", isOn: $launchAtLogin)
+                            .disabled(!LaunchAtLogin.isSupported)
+                            .onChange(of: launchAtLogin) { _, want in
+                                launchAtLoginError = LaunchAtLogin.setEnabled(want)
+                                // 注册失败就把开关拨回去，别让 UI 和实际状态不一致
+                                if launchAtLoginError != nil { launchAtLogin = LaunchAtLogin.isEnabled }
+                            }
+                    }
+
+                    if let hint = launchAtLoginError ?? LaunchAtLogin.statusDescription {
+                        HStack(spacing: 6) {
+                            Text(hint).font(.caption).foregroundStyle(.secondary)
+                            if LaunchAtLogin.requiresApproval {
+                                Button("打开登录项设置") { LaunchAtLogin.openLoginItemsSettings() }
+                                    .buttonStyle(.link).font(.caption)
+                            }
+                        }
                     }
                 } header: {
                     Text("采集设置")

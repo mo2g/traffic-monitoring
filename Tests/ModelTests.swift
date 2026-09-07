@@ -341,3 +341,26 @@ final class ProcessIconCacheTests: XCTestCase {
         XCTAssertLessThan(elapsed, .milliseconds(50), "重复查询未命中路径应命中缓存")
     }
 }
+
+// ============================================================
+// MARK: - 开机自启动可用性判定
+// ============================================================
+
+/// 只验证「能不能用」的判定逻辑，不真的注册登录项 —— 那会改动用户系统状态。
+@MainActor
+final class LaunchAtLoginTests: XCTestCase {
+    /// 测试进程不是 .app bundle，因此必然判定为不支持
+    func testUnsupportedWhenNotRunningAsAppBundle() {
+        XCTAssertFalse(LaunchAtLogin.isSupported)
+        XCTAssertFalse(LaunchAtLogin.isEnabled)
+        XCTAssertFalse(LaunchAtLogin.requiresApproval)
+    }
+
+    /// 不支持时必须给出可读原因，而不是静默失败
+    func testUnsupportedReportsReason() {
+        let reason = LaunchAtLogin.setEnabled(true)
+        XCTAssertNotNil(reason)
+        XCTAssertFalse(reason!.isEmpty)
+        XCTAssertNotNil(LaunchAtLogin.statusDescription)
+    }
+}

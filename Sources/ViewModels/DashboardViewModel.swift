@@ -14,6 +14,9 @@ import Foundation
 @Observable
 @MainActor
 final class DashboardViewModel {
+    /// 应用级唯一实例。菜单栏和主窗口共用同一份状态。
+    static let shared = DashboardViewModel()
+
     // MARK: 视图数据
 
     private(set) var rows: [ProcessRow] = []
@@ -83,14 +86,18 @@ final class DashboardViewModel {
 
     // MARK: - 订阅
 
+    /// 建立对采集快照的订阅。
+    ///
+    /// 这件事的生命周期跟着**应用**，不跟着窗口。之前放在主窗口的
+    /// `onAppear`/`onDisappear` 里，关掉窗口就把 sink 置空，菜单栏的数字
+    /// 随即冻住 —— 而菜单栏模式的整个意义就是没有窗口时也能看。
+    ///
+    /// 真正该省的开销由管线侧的可见性闸门负责（`setUIVisible`），
+    /// 那里能区分「窗口被遮挡」和「菜单栏还需要数据」。
     func startObserving() {
         CollectorService.shared.snapshotSink = { [weak self] snapshot in
             self?.apply(snapshot)
         }
-    }
-
-    func stopObserving() {
-        CollectorService.shared.snapshotSink = nil
     }
 
     func loadGroups() { processGroups = GroupStore.shared.load() }

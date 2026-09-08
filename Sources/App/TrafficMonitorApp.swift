@@ -6,10 +6,16 @@ import AppKit
 @MainActor
 struct TrafficMonitorApp: App {
     @State private var collectorService = CollectorService.shared
-    @State private var dashboardVM = DashboardViewModel()
+    @State private var dashboardVM = DashboardViewModel.shared
 
     init() {
         NSApplication.shared.setActivationPolicy(.regular)
+        // 采集与订阅都属于应用生命周期，不能挂在主窗口上 ——
+        // 否则关掉窗口菜单栏就停更。
+        DashboardViewModel.shared.startObserving()
+        DashboardViewModel.shared.loadGroups()
+        CollectorService.shared.loadAlertRules()
+        Task { await CollectorService.shared.start() }
     }
 
     var body: some Scene {
@@ -21,17 +27,9 @@ struct TrafficMonitorApp: App {
                 .id(collectorService.language)   // 切换语言时重建视图树
                 .onAppear {
                     if Bundle.main.bundleIdentifier != nil {
-                        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+                        UNUserNotificationCenter.current()
+                            .requestAuthorization(options: [.alert, .sound]) { _, _ in }
                     }
-                    dashboardVM.startObserving()
-                    dashboardVM.loadGroups()
-                    collectorService.loadAlertRules()
-                    Task {
-                        await collectorService.start()
-                    }
-                }
-                .onDisappear {
-                    dashboardVM.stopObserving()
                 }
         }
         .windowStyle(.titleBar)

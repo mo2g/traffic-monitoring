@@ -247,12 +247,17 @@ final class CollectorService {
             NSWindow.didChangeOcclusionStateNotification,
             NSWindow.didMiniaturizeNotification,
             NSWindow.didDeminiaturizeNotification,
+            NSWindow.willCloseNotification,
             NSApplication.didHideNotification,
             NSApplication.didUnhideNotification,
         ]
         visibilityObservers = names.map { name in
             center.addObserver(forName: name, object: nil, queue: .main) { _ in
-                MainActor.assumeIsolated { CollectorService.shared.syncVisibility() }
+                // 延后一个 runloop 再算：willClose 触发时窗口仍是 isVisible，
+                // 当场判断会得到「还开着」的错误结论。
+                DispatchQueue.main.async {
+                    MainActor.assumeIsolated { CollectorService.shared.syncVisibility() }
+                }
             }
         }
         syncVisibility()
@@ -264,15 +269,28 @@ final class CollectorService {
         Task { await TrafficPipeline.shared.setUIVisible(true) }
     }
 
+    /// 是否已经见过一个可主窗口。用来区分「启动早期还没建好窗口」
+    /// 和「用户主动把窗口关掉了」—— 前者要当作可见，后者不该再产出快照。
+    private var hasSeenMainWindow = false
+
     private func syncVisibility() {
         guard !menuBarEnabled else {
             // 菜单栏在显示实时速率，快照不能停
             Task { await TrafficPipeline.shared.setUIVisible(true) }
             return
         }
-        let windows = NSApp.windows.filter { $0.isVisible }
-        // 一个可见窗口都没有时也当作可见，避免启动早期误判导致首屏空白
-        let visible = windows.isEmpty || windows.contains { $0.occlusionState.contains(.visible) }
+
+        let mainWindows = NSApp.windows.filter { $0.canBecomeMain && $0.isVisible }
+        if !mainWindows.isEmpty { hasSeenMainWindow = true }
+
+        let visible: Bool
+        if mainWindows.isEmpty {
+            // 启动早期尚无窗口 → 当作可见，避免首屏空白；
+            // 窗口出现过又消失 → 用户关掉了，且菜单栏也没开，没人需要快照
+            visible = !hasSeenMainWindow
+        } else {
+            visible = mainWindows.contains { $0.occlusionState.contains(.visible) }
+        }
         Task { await TrafficPipeline.shared.setUIVisible(visible) }
     }
 }

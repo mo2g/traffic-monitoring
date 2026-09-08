@@ -91,6 +91,66 @@ final class MenuBarPanelLayoutTests: XCTestCase {
         XCTAssertEqual(height(MenuBarPanel.rowCapacity), height(50))
     }
 
+    // MARK: - 顶部指标不随数值横跳
+
+    private func bitmap(rx: Double, tx: Double, bytes: Int64) -> NSBitmapImageRep {
+        let dashboard = DashboardViewModel.shared
+        dashboard.apply(DashboardSnapshot(rows: [row(0)],
+                                          totalRxRate: rx, totalTxRate: tx, totalBytes: bytes))
+        let host = NSHostingView(rootView:
+            MenuBarPanel().environment(dashboard).environment(CollectorService.shared))
+        host.frame = NSRect(origin: .zero, size: host.fittingSize)
+        host.layoutSubtreeIfNeeded()
+        let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
+        host.cacheDisplay(in: host.bounds, to: rep)
+        return rep
+    }
+
+    private func column(_ x: CGFloat, of rep: NSBitmapImageRep) -> [NSColor?] {
+        let scale = CGFloat(rep.pixelsWide) / rep.size.width
+        let px = Int(x * scale)
+        guard px >= 0, px < rep.pixelsWide else { return [] }
+        return (0..<rep.pixelsHigh).map { rep.colorAt(x: px, y: $0) }
+    }
+
+    /// 数值长度变化不能推动分隔线。
+    ///
+    /// `0 B/s` 与 `120.6 KB/s` 差约 40pt —— 若槽位宽度由内容决定，
+    /// 分隔线会横移这么多，右侧指标跟着跑。这里直接取分隔线所在的像素列比对。
+    func testDividersDoNotMoveWhenValuesChange() {
+        let small = bitmap(rx: 0, tx: 0, bytes: 0)
+        let large = bitmap(rx: 123_456, tx: 999_999_999, bytes: 10_900_000_000)
+
+        let panelPadding: CGFloat = 10
+        let firstDivider = panelPadding + MetricSlot.rate + MetricSlot.dividerPadding
+        let secondDivider = firstDivider + 1 + MetricSlot.dividerPadding
+            + MetricSlot.rate + MetricSlot.dividerPadding
+
+        // 不直接 XCTAssertEqual 两个颜色数组 —— 失败时会把整列像素倒出来，
+        // 几千字符里看不出问题。只报差异数量。
+        for (index, x) in [firstDivider, secondDivider].enumerated() {
+            let a = column(x, of: small), b = column(x, of: large)
+            let differing = zip(a, b).filter { $0 != $1 }.count
+            XCTAssertEqual(differing, 0,
+                "第 \(index + 1) 条分隔线随数值移动了：x=\(x)pt 处有 \(differing)/\(a.count) 个像素不同")
+        }
+    }
+
+    /// 槽位宽度只由「最宽可能字符串」决定，与当前数值无关
+    func testSlotWidthsAreConstant() {
+        let before = (MetricSlot.rate, MetricSlot.total)
+        _ = bitmap(rx: 0, tx: 0, bytes: 0)
+        _ = bitmap(rx: 9_999_999_999, tx: 9_999_999_999, bytes: .max / 2)
+        XCTAssertEqual(before.0, MetricSlot.rate)
+        XCTAssertEqual(before.1, MetricSlot.total)
+    }
+
+    /// 三个槽位加分隔线必须放得进面板，否则会被压缩或裁掉
+    func testMetricRowFitsInsidePanel() {
+        XCTAssertLessThanOrEqual(MetricSlot.totalRowWidth, 280 - 20,
+                                 "指标行 \(MetricSlot.totalRowWidth)pt 放不进面板内容区")
+    }
+
     /// 宽度固定 —— 进程名长短不该改变面板宽度
     func testWidthIsFixed() {
         let dashboard = DashboardViewModel.shared

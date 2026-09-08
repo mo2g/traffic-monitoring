@@ -91,28 +91,40 @@ struct MenuBarPanel: View {
 
     // MARK: - 汇总
 
+    /// 三个指标**各占固定宽度**，见 `MetricSlot`。
+    /// 否则数值一变长度，分隔线和右侧指标就会左右横跳。
     private var totals: some View {
         HStack(spacing: 0) {
             metric(L("summary.downloadRate"),
-                   ByteFormatter.rateString(bytesPerSecond: dashboard.totalRxRate), .blue)
-            Divider().frame(height: 26).padding(.horizontal, 10)
+                   ByteFormatter.rateString(bytesPerSecond: dashboard.totalRxRate),
+                   .blue, width: MetricSlot.rate)
+            metricDivider
             metric(L("summary.uploadRate"),
-                   ByteFormatter.rateString(bytesPerSecond: dashboard.totalTxRate), .red)
-            Divider().frame(height: 26).padding(.horizontal, 10)
+                   ByteFormatter.rateString(bytesPerSecond: dashboard.totalTxRate),
+                   .red, width: MetricSlot.rate)
+            metricDivider
             metric(dashboard.selectedTimeRange.displayName,
-                   ByteFormatter.string(bytes: dashboard.totalTraffic), .primary)
-            Spacer()
+                   ByteFormatter.string(bytes: dashboard.totalTraffic),
+                   .primary, width: MetricSlot.total)
+            Spacer(minLength: 0)
         }
     }
 
-    private func metric(_ label: String, _ value: String, _ color: Color) -> some View {
+    private var metricDivider: some View {
+        Divider().frame(height: 26).padding(.horizontal, MetricSlot.dividerPadding)
+    }
+
+    private func metric(_ label: String, _ value: String,
+                        _ color: Color, width: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 1) {
             Text(label).font(.system(size: 9)).foregroundStyle(.secondary)
             Text(value).font(.system(size: 12, weight: .medium, design: .monospaced))
                 .foregroundStyle(color)
-                // 数值宽度变化不该推动旁边的分隔线
                 .monospacedDigit()
         }
+        .frame(width: width, alignment: .leading)
+        // 极端数值宁可缩一点也不要把分隔线推走
+        .lineLimit(1)
     }
 
     // MARK: - 操作
@@ -159,6 +171,71 @@ struct MenuBarPanel: View {
             .contentShape(RoundedRectangle(cornerRadius: 5))
         }
         .buttonStyle(HoverHighlightButtonStyle())
+    }
+}
+
+
+// MARK: - 指标槽位宽度
+
+/// 顶部三个指标各自的固定宽度。
+///
+/// 数值每秒都在变，字符串长度也跟着变（`0 B/s` ↔ `120.6 KB/s`）。
+/// 若让内容决定宽度，分隔线和右侧指标就会左右横跳。
+///
+/// 与菜单栏图片同样的做法：不手写模板串，直接把一组覆盖各数量级的值喂进
+/// **真正的格式化器**量出最大宽度 —— 格式规则将来变了，宽度会自动跟上。
+///
+/// 按语言缓存：标签是本地化的，换语言后宽度需要重算。
+enum MetricSlot {
+    /// 指标之间分隔线两侧的留白
+    static let dividerPadding: CGFloat = 8
+
+    /// 速率指标（下载 / 上传）
+    static var rate: CGFloat { width(kind: .rate) }
+    /// 总量指标（今日 / 本周 / 本月）
+    static var total: CGFloat { width(kind: .total) }
+
+    /// 三个槽位加两条分隔线的总宽，用来核对能否放进面板
+    static var totalRowWidth: CGFloat {
+        rate * 2 + total + (dividerPadding * 2 + 1) * 2
+    }
+
+    private enum Kind { case rate, total }
+
+    nonisolated(unsafe) private static var cache: [String: CGFloat] = [:]
+
+    private static func width(kind: Kind) -> CGFloat {
+        let key = "\(L10n.effective)-\(kind)"
+        if let cached = cache[key] { return cached }
+
+        let valueFont = NSFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        let labelFont = NSFont.systemFont(ofSize: 9)
+        func measure(_ text: String, _ font: NSFont) -> CGFloat {
+            (text as NSString).size(withAttributes: [.font: font]).width
+        }
+
+        var widest: CGFloat = 0
+        // 速率封顶到 GB/s 量级：再往上（TB/s）现实中不会出现，
+        // 为它预留宽度只会白白挤掉别的内容
+        let exponents = kind == .rate ? 0...3 : 0...4
+        for exponent in exponents {
+            for multiplier in [1.0, 9.9, 10.0, 99.0, 999.9] {
+                let value = multiplier * pow(1024, Double(exponent))
+                let text = kind == .rate
+                    ? ByteFormatter.rateString(bytesPerSecond: value)
+                    : ByteFormatter.string(bytes: Int64(value))
+                widest = max(widest, measure(text, valueFont))
+            }
+        }
+
+        let labels = kind == .rate
+            ? [L("summary.downloadRate"), L("summary.uploadRate")]
+            : DashboardViewModel.TimeRange.allCases.map(\.displayName)
+        for label in labels { widest = max(widest, measure(label, labelFont)) }
+
+        let result = ceil(widest)
+        cache[key] = result
+        return result
     }
 }
 

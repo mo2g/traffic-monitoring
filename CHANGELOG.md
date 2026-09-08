@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.7.4] — 2026-09-08
+
+### Fixed
+
+- **菜单栏面板顶部指标随数值横跳**。三个指标的宽度由内容决定，
+  数值一变长度（`0 B/s` ↔ `120.6 KB/s`，相差约 40pt），分隔线和右侧指标
+  就跟着左右移动。现在每个槽位固定宽度。
+
+  宽度不是手写的常量，而是把一组覆盖各数量级的值喂进**真正的格式化器**
+  量出最大值（与菜单栏图片同样的做法）—— 格式规则将来变了宽度会自动跟上。
+  按语言缓存，因为标签是本地化的。
+
+  速率槽 75pt、总量槽 60pt，加两条分隔线共 244pt，面板内容区 260pt，
+  有专门的测试守住这个余量。
+
+- **`ByteFormatter.rateString` 的单位表只到 `GB/s`**，更大的值不再进位，
+  会输出 `1023897.6 GB/s`。补上 `TB/s`。这是在量各档最宽字符串时发现的。
+
+### Tests
+
+151 个（+3）：分隔线不随数值移动（直接取分隔线所在像素列比对）、
+槽位宽度与当前数值无关、指标行放得进面板。
+
 ## [0.7.3] — 2026-09-08
 
 ### Changed

@@ -50,7 +50,9 @@ enum ByteFormatter {
         if bytesPerSecond < 1024 {
             return String(format: "%.0f B/s", bytesPerSecond)
         }
-        let units = ["KB/s", "MB/s", "GB/s"]
+        // 要有 TB/s：只到 GB/s 时更大的值不再进位，会输出
+        // "1023897.6 GB/s" 这种东西（量各档最宽字符串时发现的）
+        let units = ["KB/s", "MB/s", "GB/s", "TB/s"]
         var value = bytesPerSecond / 1024.0
         var unitIndex = 0
         while value >= 1024 && unitIndex < units.count - 1 {

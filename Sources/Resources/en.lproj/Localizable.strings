@@ -54,10 +54,8 @@
 /* ── Menu bar ── */
 "menubar.accessibility"    = "Down %1$@, up %2$@";
 "menubar.noActivity"       = "No network activity";
-"menubar.openMainWindow"   = "Open main window";
-"menubar.startCollecting"  = "Start collecting";
-"menubar.stopCollecting"   = "Stop collecting";
-"menubar.quit"             = "Quit TrafficMonitor";
+"menubar.window"           = "Window";
+"menubar.quitShort"        = "Quit";
 
 /* ── Detail window ── */
 "detail.close"             = "Close (Esc)";
@@ -98,7 +96,6 @@
 "settings.seconds"         = "%d s";
 "settings.language"        = "Language";
 "settings.language.system" = "System";
-"settings.language.hint"   = "Takes effect immediately.";
 "settings.menuBar"         = "Show rates in menu bar";
 "settings.menuBar.help"    = "Keep live up/down rates in the menu bar";
 "settings.menuBarFontSize" = "Menu bar font size";

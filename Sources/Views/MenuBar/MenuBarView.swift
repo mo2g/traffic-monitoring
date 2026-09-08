@@ -31,9 +31,9 @@ struct MenuBarPanel: View {
     @Environment(\.openWindow) private var openWindow
 
     /// 面板里最多列几个进程。再多就该开主窗口了。
-    private static let rowCapacity = 6
+    static let rowCapacity = 6
     /// 单行高度。写死而不是让内容撑开 —— 见 `processList` 的说明。
-    private static let rowHeight: CGFloat = 18
+    static let rowHeight: CGFloat = 18
 
     /// 面板里只列最活跃的几个
     private var topRows: [ProcessRow] {
@@ -47,9 +47,9 @@ struct MenuBarPanel: View {
         VStack(alignment: .leading, spacing: 0) {
             totals
             Divider().padding(.vertical, 6)
-            processList
-            Divider().padding(.vertical, 6)
             actions
+            Divider().padding(.vertical, 6)
+            processList
         }
         .padding(10)
         .frame(width: 280)
@@ -57,26 +57,20 @@ struct MenuBarPanel: View {
 
     // MARK: - 进程列表
 
-    /// 高度**恒定**，不随活跃进程数量伸缩。
+    /// 放在面板**最底部**，因此可以随内容自由增长。
     ///
-    /// 活跃进程每秒都在变。如果让列表撑开面板，下面的「打开主窗口 / 启停采集 /
-    /// 退出」就会跟着上下跳 —— 用户正要点「打开主窗口」，面板一缩，
-    /// 手指落到了「退出」。所以始终按 `rowCapacity` 行预留空间，不足的补空行。
+    /// 菜单栏面板从菜单栏往下挂，顶边固定、底边浮动 —— 只要可变高度的内容
+    /// 位于所有交互元素之下，按钮的屏幕位置就不会动。
+    /// 这比「给列表预留固定高度」更好：进程少时不会留一大块空白。
     private var processList: some View {
         VStack(spacing: 0) {
-            ForEach(0..<Self.rowCapacity, id: \.self) { index in
-                if index < topRows.count {
-                    processRow(topRows[index])
-                } else {
-                    Color.clear.frame(height: Self.rowHeight)
-                }
-            }
-        }
-        .frame(height: CGFloat(Self.rowCapacity) * Self.rowHeight)
-        .overlay {
             if topRows.isEmpty {
                 Text(L("menubar.noActivity"))
                     .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: Self.rowHeight)
+            } else {
+                ForEach(topRows) { processRow($0) }
             }
         }
     }
@@ -123,9 +117,17 @@ struct MenuBarPanel: View {
 
     // MARK: - 操作
 
+    /// 紧凑的一行工具栏，而不是三条整宽菜单项。
+    ///
+    /// 两个考虑：
+    /// - **位置必须固定**：面板从菜单栏往下挂，顶边固定、底边浮动。
+    ///   把所有交互元素放在可变高度的进程列表**之上**，按钮就永远不会移位。
+    ///   （实测：空面板与满面板的顶部 241 行像素完全一致。）
+    /// - **不该喧宾夺主**：开窗口、启停、退出都是低频操作，占三行整宽菜单
+    ///   会把真正常看的进程列表挤到视线之外。压成一行图标+短标签即可。
     private var actions: some View {
-        VStack(spacing: 2) {
-            menuButton(L("menubar.openMainWindow"), "macwindow") {
+        HStack(spacing: 4) {
+            actionButton(L("menubar.window"), "macwindow") {
                 NSApp.activate(ignoringOtherApps: true)
                 if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.contentView != nil }) {
                     window.makeKeyAndOrderFront(nil)
@@ -133,27 +135,42 @@ struct MenuBarPanel: View {
                     openWindow(id: MainWindowID.value)
                 }
             }
-            menuButton(collector.status == .running ? L("menubar.stopCollecting")
-                                                    : L("menubar.startCollecting"),
-                       collector.status == .running ? "stop.fill" : "play.fill") {
+            actionButton(collector.status == .running ? L("toolbar.stop") : L("toolbar.start"),
+                         collector.status == .running ? "stop.fill" : "play.fill") {
                 if collector.status == .running { collector.stop() }
                 else { Task { await collector.start() } }
             }
-            Divider().padding(.vertical, 2)
-            menuButton(L("menubar.quit"), "power") { NSApp.terminate(nil) }
+            Spacer(minLength: 0)
+            actionButton(L("menubar.quitShort"), "power") { NSApp.terminate(nil) }
         }
     }
 
-    private func menuButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+    private func actionButton(_ title: String, _ symbol: String,
+                              action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: symbol).frame(width: 14)
+            HStack(spacing: 4) {
+                Image(systemName: symbol).font(.system(size: 10))
                 Text(title).font(.system(size: 11))
-                Spacer()
             }
-            .contentShape(Rectangle())
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .contentShape(RoundedRectangle(cornerRadius: 5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(HoverHighlightButtonStyle())
+    }
+}
+
+/// 悬停时给一层浅背景，让这些无边框按钮有可点的提示
+private struct HoverHighlightButtonStyle: ButtonStyle {
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(Color.primary.opacity(configuration.isPressed ? 0.16 : (hovering ? 0.08 : 0)))
+            )
+            .onHover { hovering = $0 }
     }
 }
 

@@ -54,10 +54,8 @@
 /* ── 菜单栏 ── */
 "menubar.accessibility"    = "下行 %1$@，上行 %2$@";
 "menubar.noActivity"       = "当前没有网络活动";
-"menubar.openMainWindow"   = "打开主窗口";
-"menubar.startCollecting"  = "启动采集";
-"menubar.stopCollecting"   = "停止采集";
-"menubar.quit"             = "退出 TrafficMonitor";
+"menubar.window"           = "主窗口";
+"menubar.quitShort"        = "退出";
 
 /* ── 详情窗 ── */
 "detail.close"             = "关闭 (Esc)";
@@ -98,7 +96,6 @@
 "settings.seconds"         = "%d 秒";
 "settings.language"        = "界面语言";
 "settings.language.system" = "跟随系统";
-"settings.language.hint"   = "切换后界面立即生效。";
 "settings.menuBar"         = "菜单栏显示速率";
 "settings.menuBar.help"    = "在菜单栏常驻显示实时上下行速率";
 "settings.menuBarFontSize" = "菜单栏字号";

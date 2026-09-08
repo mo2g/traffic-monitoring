@@ -45,9 +45,9 @@ struct MenuBarPanel: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            totals
-            Divider().padding(.vertical, 6)
             actions
+            Divider().padding(.vertical, 6)
+            totals
             Divider().padding(.vertical, 6)
             processList
         }
@@ -117,14 +117,16 @@ struct MenuBarPanel: View {
 
     // MARK: - 操作
 
-    /// 紧凑的一行工具栏，而不是三条整宽菜单项。
+    /// 顶部一行紧凑工具栏。
     ///
-    /// 两个考虑：
+    /// 三个考虑：
     /// - **位置必须固定**：面板从菜单栏往下挂，顶边固定、底边浮动。
-    ///   把所有交互元素放在可变高度的进程列表**之上**，按钮就永远不会移位。
-    ///   （实测：空面板与满面板的顶部 241 行像素完全一致。）
+    ///   放在最顶部意味着它的屏幕位置只由面板顶边决定，与下方任何内容无关。
+    /// - **不割裂数据**：夹在总计和进程列表中间会把两块数据切开；
+    ///   放到最上面，总计与列表就连成一整块。
     /// - **不该喧宾夺主**：开窗口、启停、退出都是低频操作，占三行整宽菜单
-    ///   会把真正常看的进程列表挤到视线之外。压成一行图标+短标签即可。
+    ///   会把真正常看的进程列表挤出视线。压成一行图标 + 短标签即可。
+    ///   「退出」单独靠右，与另两个拉开距离，降低误点。
     private var actions: some View {
         HStack(spacing: 4) {
             actionButton(L("menubar.window"), "macwindow") {

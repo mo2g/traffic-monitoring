@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.7.3] — 2026-09-08
+
+### Changed
+
+- 菜单栏面板的操作行移到**最顶部**（此前夹在总计与进程列表之间）。
+
+  好处不只是位置更稳：夹在中间会把两块数据切开，放到最上面之后，
+  总计与进程列表连成一整块，操作行退居顶部工具栏。
+
+  同时评估并否决了「三个按钮全部左对齐」的变体 —— 那会让「退出」紧挨
+  「启动」，相邻按钮反而更容易误点，也丢掉了危险操作的视觉隔离。
+
 ## [0.7.2] — 2026-09-08
 
 ### Changed

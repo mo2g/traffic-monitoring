@@ -130,6 +130,13 @@ status and a start/stop button.
 | Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
 | Settings (`⌘,`) | Language, menu bar font size, sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
 
+The menu bar panel lists processes that had **any traffic in the last 30 seconds**,
+ranked by smoothed rate, top six — not "whatever is transferring right this instant".
+Rows sitting at zero are dimmed and drop off after 30 seconds of silence. Holding the
+membership and the row count still is what stops the panel from jumping around while
+you read it. See the [architecture notes](docs/architecture.md#9-菜单栏面板为什么要在快照之上再加一层行台账)
+for the exact rule.
+
 Data lives in `~/Library/Application Support/TrafficMonitor/traffic_monitor.db`.
 
 ## How it works
@@ -203,7 +210,7 @@ Known gaps, roughly in order of usefulness:
 │   │   └── DataStore.swift         SQLite via GRDB (actor)
 │   ├── Models/         Value types crossing concurrency domains
 │   ├── Utilities/      Constants, identity resolver, formatting, logging
-│   ├── ViewModels/
+│   ├── ViewModels/     DashboardViewModel, MenuBarRowLedger
 │   └── Views/
 ├── Tests/
 ├── Resources/

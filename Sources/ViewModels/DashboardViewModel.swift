@@ -21,6 +21,9 @@ final class DashboardViewModel {
 
     private(set) var rows: [ProcessRow] = []
     private(set) var groupRows: [GroupRow] = []
+    /// 菜单栏面板的行。经过平滑与驻留，刻意**不随**主窗口的搜索/排序变化 ——
+    /// 详见 `MenuBarRowLedger`。
+    private(set) var menuBarRows: [MenuBarRow] = []
     private(set) var totalRxRate: Double = 0
     private(set) var totalTxRate: Double = 0
     private(set) var totalTraffic: Int64 = 0
@@ -55,6 +58,7 @@ final class DashboardViewModel {
 
     /// 最近一次快照（未排序原始行），排序/分组变化时据此重算
     @ObservationIgnored private var latest = DashboardSnapshot()
+    @ObservationIgnored private var menuBarLedger = MenuBarRowLedger()
 
     enum TimeRange: String, CaseIterable, Identifiable {
         // rawValue 是持久化标识，必须与界面语言无关；展示名走 `displayName`
@@ -113,6 +117,10 @@ final class DashboardViewModel {
 
         let sorted = sortedRows(snapshot.rows)
         if rows != sorted { rows = sorted }
+
+        // 喂未过滤的原始行：菜单栏不该受主窗口搜索框影响
+        let menu = menuBarLedger.update(with: snapshot.rows)
+        if menuBarRows != menu { menuBarRows = menu }
 
         rebuildGroups()
     }

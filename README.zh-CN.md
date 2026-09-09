@@ -124,6 +124,11 @@ swift build -c release && ./.build/release/TrafficMonitor
 | 时间线窗口 | 切换图表样式（曲线 / 面积 / 柱状）和时间跨度，两者都会被记住 |
 | 设置（`⌘,`） | 界面语言、菜单栏字号、采集间隔、落库间隔、数据库大小与清理、分组、告警规则、调试日志 |
 
+面板里列出的是**最近 30 秒内有过流量的进程**，按平滑后的速率取前六名 ——
+不是「此刻正在跑的」。此刻速率为 0 的行会淡化显示，30 秒都没动静才移出列表。
+这样成员和行数不会逐帧变化，面板不会一边看一边跳。规则细节见
+[架构文档](docs/architecture.md#9-菜单栏面板为什么要在快照之上再加一层行台账)。
+
 数据保存在 `~/Library/Application Support/TrafficMonitor/traffic_monitor.db`。
 
 ## 工作原理
@@ -193,7 +198,7 @@ DashboardViewModel (@Observable) → SwiftUI
 │   │   └── DataStore.swift         SQLite / GRDB（actor）
 │   ├── Models/         跨并发域传递的值类型
 │   ├── Utilities/      常量、身份解析、格式化、日志
-│   ├── ViewModels/
+│   ├── ViewModels/     DashboardViewModel、MenuBarRowLedger
 │   └── Views/
 ├── Tests/
 ├── Resources/

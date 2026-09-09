@@ -54,7 +54,7 @@
 | `Sources/Core/` | `TrafficPipeline`（管线 actor）、`DataStore`（持久化）、`AlertStore` / `GroupStore`（偏好） |
 | `Sources/Models/` | 值类型：`PIDDelta`、`TrafficFrame`、`ProcessIdentifier`、`ProcessRow`、`DashboardSnapshot`、`TrafficEvent` … |
 | `Sources/Utilities/` | `Constants`（配置真源）、`ProcessIdentityResolver`、`ProcessIconCache`、`ByteFormatter`、`LogStore` |
-| `Sources/ViewModels/` | `DashboardViewModel` |
+| `Sources/ViewModels/` | `DashboardViewModel`、`MenuBarRowLedger`（菜单栏面板的行排名与驻留） |
 | `Sources/Views/` | SwiftUI 视图，按窗口分子目录 |
 
 ## 关键设计决策
@@ -126,6 +126,45 @@ expandItem: → NSTableRowData.endUpdates → _keepTopRowStableAtLeastOnce
 ```
 
 每次启动都会打印 `Application performed a reentrant operation in its NSTableView delegate`，且 AppKit 声明将来会升级成 assert。扁平 `List` 走 NSTableView，没有 `expandItem:` 这一步，警告消失且完整保留原生侧栏材质。
+
+### 9. 菜单栏面板为什么要在快照之上再加一层「行台账」
+
+面板一次只放得下六行，选谁进去看似显然：取速率最高的六个。实际做出来是这样的
+（真机 40 秒、每 2 秒一帧，记录每帧「速率 > 0」的进程数）：
+
+```
+rows=6 → 5 → 5 → 4 → 6 → 4 → 5 → 5 → 3 → 5 → 4 → 4 → 5 → 6 → 6 → 4 …
+```
+
+行数在 3~6 之间来回跳。菜单栏面板是**顶边固定、底边浮动**的，高度一变窗口原点
+跟着动 —— 探针实测窗口在 `(…, 921, 280, 203)` 与 `(…, 939, 280, 185)` 之间反复
+resize。成员和顺序也几乎每帧重排。整体观感就是「面板一直在闪」。
+
+症结不在渲染层，而在于**瞬时速率天然是抖的**：一个进程空一帧再回来是常态，
+不是异常。所以稳定必须在展示层做，`MenuBarRowLedger` 承担这件事：
+
+| 环节 | 规则 |
+|---|---|
+| 候选 | 最近 `lingerWindow`（30 秒）内**曾经**有过流量的进程 |
+| 排名 | 按平滑速率（EMA，`smoothing` = 0.35，约三帧记忆）降序；并列按进程 key 升序 |
+| 截断 | 取前 `capacity`（6）个 |
+| 淡化 | 此刻 `rx + tx == 0` 的行标记 `isIdle`，界面降到 45% 不透明度 |
+
+几个容易误解的点：
+
+- **不是「此刻有流量的进程」**。此刻有流量的一定在候选池里，但排名按平滑速率算，
+  偶尔会有此刻刚起速的进程排不进前六。
+- **从来没有过流量的进程永远不上榜**，哪怕今日累计流量很大 —— 候选看的是
+  `lastActive`，只有某一帧 `rx + tx > 0` 才会写入。
+- **显示的数字仍是瞬时速率**，平滑只用于排名。否则用户看到的速率会比实际慢半拍。
+- **「稳定六行」是结果不是规则**。候选不足六个就显示几行，不补空行。一般机器
+  30 秒内有流量的进程远多于六个，所以总是满的；机器真闲下来行数会少于六，
+  但那时同样是稳的 —— 高度只在活跃进程数跨过 6 这条线时变一次。
+
+复测：同一台机器连续 60 秒，**每一帧都是 6 行，窗口 frame 一次都没变过**。
+
+三个参数是直接对立的取舍：`lingerWindow` 调短（10~15 秒）列表更贴近「此刻」，
+代价是行数开始波动；调长则更稳，代价是淡化的历史行占位更多。
 
 ## 并发模型
 

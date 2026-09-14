@@ -167,6 +167,9 @@ struct MenuBarPanel: View {
     private var actions: some View {
         HStack(spacing: 4) {
             actionButton(L("menubar.window"), "macwindow") {
+                // 无窗口时应用处于菜单栏模式（没有 Dock 图标），
+                // 先把 Dock 图标升回来再显示窗口
+                DockIconController.shared.restoreDockIcon()
                 NSApp.activate(ignoringOtherApps: true)
                 if let window = NSApp.windows.first(where: { $0.canBecomeMain && $0.contentView != nil }) {
                     window.makeKeyAndOrderFront(nil)

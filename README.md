@@ -48,7 +48,7 @@ bytes physically left through the proxy.
 
 - **Attribution that survives tunnels** — per-process, read from the kernel above `utun`
 - **Aggregation by bundle identifier** — Chrome's dozens of helper processes collapse into one row
-- **Menu bar mode** — live up/down rates on two lines, adjustable font size, with a panel listing the busiest apps
+- **Menu bar mode** — live up/down rates on two lines, adjustable font size, with a panel listing the busiest apps; the Dock icon steps aside once you close the main window
 - **English and Simplified Chinese** — follows the system language, or pick one in Settings
 - **Real application icons** — resolved from the process, exactly like Activity Monitor
 - **Live rates and cumulative totals** — sortable native table, updated once per second
@@ -129,6 +129,10 @@ status and a start/stop button.
 | Menu bar | Live up/down rates on two lines (`1.2K/s↑` / `1.2M/s↓`); click for the busiest apps and quick actions |
 | Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
 | Settings (`⌘,`) | Language, menu bar font size, sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
+
+Closing the main window turns the app into a **pure menu bar app** — the Dock icon and
+the ⌘-Tab entry step aside while the rates, the panel, collection and alerts keep
+running; both come back when you reopen the window from the panel.
 
 The menu bar panel lists processes that had **any traffic in the last 30 seconds**,
 ranked by smoothed rate, top six — not "whatever is transferring right this instant".

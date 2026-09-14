@@ -9,7 +9,10 @@ struct TrafficMonitorApp: App {
     @State private var dashboardVM = DashboardViewModel.shared
 
     init() {
+        // 启动即有主窗口，按常规模式起（有 Dock 图标）。之后由
+        // DockIconController 在窗口生灭时升降：关掉主窗口 → 只留菜单栏。
         NSApplication.shared.setActivationPolicy(.regular)
+        DockIconController.shared.start()
         // 采集与订阅都属于应用生命周期，不能挂在主窗口上 ——
         // 否则关掉窗口菜单栏就停更。
         DashboardViewModel.shared.startObserving()

@@ -4,6 +4,46 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.7.6] — 2026-09-14
+
+### Changed
+
+- **关掉主窗口后应用退成纯菜单栏应用**：Dock 图标与 ⌘-Tab 条目一并收起，
+  菜单栏的速率、面板、采集与告警都不受影响。
+
+  此前 activation policy 恒为 `.regular`：主窗口关掉后进程还在跑（菜单栏模式的意义
+  就是没有窗口时也能看），但 Dock 里一直占着一个图标，⌘-Tab 里也一直挂着一个
+  「没有窗口的应用」。现在窗口生灭会同步策略：
+
+  - 关掉最后一个窗口 → `.accessory`（无 Dock 图标、无 ⌘-Tab 条目）
+  - 窗口回来 → 面板里点「打开主窗口」时先把 Dock 图标升回 `.regular` 再显示窗口
+  - **最小化不算关掉**：窗口只是收进了 Dock，点一下还要能回来
+  - 菜单栏模式没开时例外：此时菜单栏图标也不在，收起 Dock 图标应用就彻底够不着了
+    （进程还活着、采集还在跑），所以窗口关掉也留在 Dock 里
+
+  判定只认 `canBecomeMain` 的普通窗口。真机探针打印过各窗口的取值：
+
+  ```
+  AppKitWindow         level= 0 canBecomeMain=true    ← 主窗口
+  MenuBarExtraWindow   level=101 canBecomeMain=false  ← 面板（开着时还是 key）
+  NSStatusBarWindow    level= 25 canBecomeMain=false
+  ```
+
+  面板打开时会成为 key —— 也就是会走到 `didBecomeKey` 那条同步路径 —— 但它不是
+  主窗口，所以点菜单栏图标不会让 Dock 图标跟着闪。
+
+  真机探针（`lsappinfo` 看 LaunchServices 记录的进程类型）：
+  关闭主窗口后 1 秒内 `Foreground → UIElement`，调恢复入口后 1 秒内
+  `UIElement → Foreground`，期间面板开着保持 `UIElement`。`willClose` 触发时窗口
+  仍是 `isVisible`，判定延后一个 runloop 再做（与 `CollectorService.syncVisibility`
+  同一处理）。
+
+### Tests
+
+179 个（+12）：决策真值表（关窗、菜单栏关闭时的例外、最小化、面板、
+无内容窗口）与接线（`sync()` / `restoreDockIcon()` 真的调用 `setActivationPolicy`，
+结论没变时不重复调用）。
+
 ## [0.7.5] — 2026-09-09
 
 ### Fixed

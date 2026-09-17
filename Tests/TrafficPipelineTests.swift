@@ -172,6 +172,11 @@ final class TimeRangeReloadTests: XCTestCase {
                                                interval: 2, isBaseline: false))
     }
 
+    /// 指定时间戳的一帧：跨界测试要精确控制数据落在哪个桶
+    private func frame(_ deltas: [PIDDelta], at date: Date) -> TrafficFrame {
+        TrafficFrame(deltas: deltas, timestamp: date, interval: 2, isBaseline: false)
+    }
+
     func testReloadReplacesRatherThanAccumulates() async {
         await pipeline.reloadHistorical([summary("a", in: 1_000, out: 100)])
         let first = await row("a")
@@ -209,6 +214,93 @@ final class TimeRangeReloadTests: XCTestCase {
         let narrow = await pipeline.makeSnapshot()
         XCTAssertEqual(narrow.totalBytes, 100)
         XCTAssertNil(narrow.rows.first { $0.key == "dropped" }, "窗口外且无实时数据的进程应移出列表")
+    }
+
+    /// 窗口内的实时数据在重载后照旧保留（不能被顺手清掉）
+    func testReloadKeepsLiveBytesInsideWindow() async {
+        let now = Date()
+        _ = await pipeline.ingest(frame([
+            PIDDelta(pid: 999_110, execName: "inflight", bytesIn: 700, bytesOut: 300),
+        ], at: now))
+
+        await pipeline.reloadHistorical([summary("inflight", in: 2_000, out: 0)],
+                                        since: now.addingTimeInterval(-60).timeIntervalSince1970)
+
+        let merged = await row("inflight")
+        XCTAssertEqual(merged?.totalIn, 2_700)
+        XCTAssertEqual(merged?.totalOut, 300)
+    }
+
+    /// **跨零点回归**：窗口前移后，窗口外的**未落库**数据不能再算进当前窗口。
+    ///
+    /// 真机场景：00:00 重载「今日」时，23:59 那个桶还没落库 —— 桶要等封口，
+    /// flush 每 15 秒才跑一次。旧实现把 live 原样留着，于是「今日」里混进
+    /// 昨天最后一分钟的流量，而且会一直留着，直到下次重载才被数据库结果冲掉。
+    func testReloadDropsLiveBytesOutsideWindow() async {
+        let now = Date()
+        let windowStart = now.addingTimeInterval(-60)
+        let previousBucket = now.addingTimeInterval(-120)
+
+        _ = await pipeline.ingest(frame([
+            PIDDelta(pid: 999_120, execName: "tail", bytesIn: 900, bytesOut: 100),
+        ], at: previousBucket))
+        _ = await pipeline.ingest(frame([
+            PIDDelta(pid: 999_121, execName: "fresh", bytesIn: 300, bytesOut: 0),
+        ], at: now))
+        let before = await pipeline.makeSnapshot()
+        XCTAssertEqual(before.totalBytes, 1_300, "重载前两笔都在窗口里（窗口未裁剪）")
+
+        await pipeline.reloadHistorical([], since: windowStart.timeIntervalSince1970)
+
+        let after = await pipeline.makeSnapshot()
+        let tail = await row("tail")
+        let fresh = await row("fresh")
+        XCTAssertNil(tail, "窗口外且无实时数据的进程应移出列表")
+        XCTAssertEqual(fresh?.totalIn, 300)
+        XCTAssertEqual(after.totalBytes, 300, "窗口外那一分钟不能留在实时部分")
+    }
+
+    /// 窗口外的桶落库时也不能转成「窗口内已落库」的历史 ——
+    /// 否则跨零点后「今日」还是会把昨天那部分算进来，只是从 live 挪进了 historical。
+    func testFlushDoesNotMoveOutOfWindowBytesIntoHistorical() async {
+        let now = Date()
+        _ = await pipeline.ingest(frame([
+            PIDDelta(pid: 999_130, execName: "oldbucket", bytesIn: 500, bytesOut: 0),
+        ], at: now.addingTimeInterval(-120)))
+        _ = await pipeline.ingest(frame([
+            PIDDelta(pid: 999_131, execName: "newbucket", bytesIn: 200, bytesOut: 0),
+        ], at: now))
+
+        await pipeline.reloadHistorical([], since: now.addingTimeInterval(-60).timeIntervalSince1970)
+        await pipeline.flush(force: true)          // 两个桶都写出去（含窗口外那个）
+
+        let snap = await pipeline.makeSnapshot()
+        let kept = await row("newbucket")
+        let dropped = await row("oldbucket")
+        XCTAssertEqual(kept?.totalIn, 200, "窗口内的照常落账")
+        XCTAssertNil(dropped)
+        XCTAssertEqual(snap.totalBytes, 200, "窗口外落库的字节不该进入当前窗口")
+    }
+
+    /// 帧越过窗口终点 → 标记「窗口过期」，等 CollectorService 取走并重查。
+    /// 这是跨零点自动切换「今日」的触发条件。
+    func testFramePastWindowEndRequestsRefresh() async {
+        let now = Date()
+        await pipeline.reloadHistorical(
+            [],
+            since: now.addingTimeInterval(-60).timeIntervalSince1970,
+            until: now.addingTimeInterval(60).timeIntervalSince1970
+        )
+
+        _ = await pipeline.ingest(frame([], at: now.addingTimeInterval(30)))
+        let early = await pipeline.takeWindowRefreshRequest()
+        XCTAssertFalse(early, "窗口还没到头，不该请求重查")
+
+        _ = await pipeline.ingest(frame([], at: now.addingTimeInterval(61)))
+        let expired = await pipeline.takeWindowRefreshRequest()
+        XCTAssertTrue(expired, "越过终点必须请求重查")
+        let consumed = await pipeline.takeWindowRefreshRequest()
+        XCTAssertFalse(consumed, "取走即清零，不能每帧都重查")
     }
 
     /// 有实时数据的进程即使不在新窗口的历史里，也要留在列表上（历史归零、实时保留）
@@ -254,6 +346,108 @@ final class TimeRangeBoundaryTests: XCTestCase {
         for range in DashboardViewModel.TimeRange.allCases {
             XCTAssertLessThanOrEqual(range.start, Date(), "\(range.rawValue) 起点不应在未来")
         }
+    }
+
+    /// 窗口终点就是**下一个日历边界**：跨过它，窗口里装的就是上一天/上一周/上一月的
+    /// 数据了 —— 必须重查，否则「今日」会一直停在上一天。
+    @MainActor
+    func testRangeEndsAtNextCalendarBoundary() {
+        let calendar = Calendar.current
+        let now = Date()
+        let today = DashboardViewModel.TimeRange.today
+        let week = DashboardViewModel.TimeRange.week
+        let month = DashboardViewModel.TimeRange.month
+
+        // 「今日」终点 = 明天零点
+        let dayEnd = today.endDate(at: now, calendar: calendar)
+        XCTAssertEqual(calendar.startOfDay(for: dayEnd), dayEnd)
+
+        // 「本周」终点 = 下一周第一天零点（用日历的周区间做对照）
+        let weekEnd = week.endDate(at: now, calendar: calendar)
+        XCTAssertEqual(calendar.dateInterval(of: .weekOfYear, for: weekEnd)?.start, weekEnd)
+
+        // 「本月」终点 = 下个月一号零点
+        let monthEnd = month.endDate(at: now, calendar: calendar)
+        XCTAssertEqual(calendar.dateInterval(of: .month, for: monthEnd)?.start, monthEnd)
+
+        for range in DashboardViewModel.TimeRange.allCases {
+            XCTAssertGreaterThan(range.endDate(at: now, calendar: calendar),
+                                 range.startDate(at: now, calendar: calendar),
+                                 "\(range.rawValue) 终点必须在起点之后")
+        }
+    }
+
+    /// 夏令时那天不是 24 小时：终点得落在下一个日历边界上，不能拿 +86400 推。
+    /// 2026-03-08 是美东夏令时开始日（当地只有 23 小时）。
+    @MainActor
+    func testDayWindowSpansCalendarDayNot24Hours() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York")!
+        let noon = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 12))!
+
+        let start = DashboardViewModel.TimeRange.today.startDate(at: noon, calendar: calendar)
+        let end = DashboardViewModel.TimeRange.today.endDate(at: noon, calendar: calendar)
+
+        XCTAssertEqual(start, calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 0)))
+        XCTAssertEqual(end, calendar.date(from: DateComponents(year: 2026, month: 3, day: 9, hour: 0)),
+                       "终点应是次日零点，而不是当天零点 + 24 小时")
+        XCTAssertEqual(end.timeIntervalSince(start), 23 * 3_600, accuracy: 1)
+    }
+}
+
+// ============================================================
+// MARK: - 跨零点自动重载（CollectorService 接线）
+// ============================================================
+
+/// 跨过日历边界后窗口要自动重查 —— 否则「今日」会一直停在上一天，
+/// 用户看到的就是「从打开应用累积到现在」。
+@MainActor
+final class TimeRangeRolloverTests: XCTestCase {
+    private let pipeline = TrafficPipeline.shared
+    private var savedTimeRange: DashboardViewModel.TimeRange = .today
+
+    override func setUp() async throws {
+        await pipeline.reset()
+        savedTimeRange = Preferences.timeRange
+    }
+
+    override func tearDown() async throws {
+        Preferences.timeRange = savedTimeRange
+        await pipeline.reset()
+    }
+
+    private func frame(_ deltas: [PIDDelta], at date: Date) -> TrafficFrame {
+        TrafficFrame(deltas: deltas, timestamp: date, interval: 2, isBaseline: false)
+    }
+
+    /// 整条触发链路：帧越过窗口终点 → 取标记 → 按当前范围重查 → 窗口外的实时数据退出。
+    func testFramePastWindowEndReloadsCurrentRange() async {
+        Preferences.timeRange = .today
+
+        let calendar = Calendar.current
+        let startOfToday = calendar.startOfDay(for: Date())
+        let startOfYesterday = calendar.date(byAdding: .day, value: -1, to: startOfToday)!
+
+        // 像「昨天就开着」那样装载昨天的窗口，并写入昨天的一笔（尚未落库）
+        await pipeline.reloadHistorical([], since: startOfYesterday.timeIntervalSince1970,
+                                        until: startOfToday.timeIntervalSince1970)
+        _ = await pipeline.ingest(frame([
+            PIDDelta(pid: 999_400, execName: "stale", bytesIn: 800, bytesOut: 100),
+        ], at: startOfToday.addingTimeInterval(-60)))
+
+        // 00:00:01 的那一帧越过「今天」的起点 —— 对昨天的窗口来说就是越过了终点
+        _ = await pipeline.ingest(frame([
+            PIDDelta(pid: 999_401, execName: "current", bytesIn: 200, bytesOut: 0),
+        ], at: startOfToday.addingTimeInterval(1)))
+
+        let expired = await pipeline.takeWindowRefreshRequest()   // 采集循环里的判定
+        XCTAssertTrue(expired, "越过窗口终点应请求重查")
+        await CollectorService.shared.reloadCurrentTimeRange()    // 循环随后做的事
+
+        let snap = await pipeline.makeSnapshot()
+        XCTAssertNil(snap.rows.first { $0.key == "stale" }, "昨天的实时数据应随窗口重载退出")
+        XCTAssertEqual(snap.rows.first { $0.key == "current" }?.totalIn, 200)
+        XCTAssertEqual(snap.totalBytes, 200)
     }
 }
 

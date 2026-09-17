@@ -184,12 +184,22 @@ final class CollectorService {
     /// `flush()` 会把它转进历史。
     func applyTimeRange(_ range: DashboardViewModel.TimeRange) async {
         let since = range.start.timeIntervalSince1970
-        let summaries = (try? await DataStore.shared.querySummary(since: since)) ?? []
-        await TrafficPipeline.shared.reloadHistorical(summaries)
+        let until = range.end.timeIntervalSince1970
+        let summaries = (try? await DataStore.shared.querySummary(since: since, until: until)) ?? []
+        await TrafficPipeline.shared.reloadHistorical(summaries, since: since, until: until)
         await LogStore.shared.log(
             "Time range → \(range.rawValue), loaded \(summaries.count) historical rows",
             level: .info, tag: "Collector"
         )
+    }
+
+    /// 按当前范围重查窗口。
+    ///
+    /// 跨过日历边界后必须调一次：窗口起点停在装载那一刻，不重查的话「今日」会一直
+    /// 累计到跨天之后 —— 用户看到的数字成了「从打开应用累积到现在」，只有手动切一次
+    /// 范围才会刷新。
+    func reloadCurrentTimeRange() async {
+        await applyTimeRange(Preferences.timeRange)
     }
 
     /// 应用「排除进程」列表：立即生效，已累计的数据一并清出
@@ -218,7 +228,12 @@ final class CollectorService {
                 if Task.isCancelled { break }
                 // 一帧只进一次 actor；不到刷新节拍或窗口不可见时返回 nil，
                 // 主线程完全不被唤醒
-                guard let snapshot = await TrafficPipeline.shared.ingest(frame) else { continue }
+                let snapshot = await TrafficPipeline.shared.ingest(frame)
+                // 判定留在管线侧：只有真越过窗口终点（跨零点）才轮到主线程
+                if await TrafficPipeline.shared.takeWindowRefreshRequest() {
+                    await self?.reloadCurrentTimeRange()
+                }
+                guard let snapshot else { continue }
                 await MainActor.run { [weak self] in
                     self?.snapshotSink?(snapshot)
                 }

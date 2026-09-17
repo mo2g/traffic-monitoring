@@ -76,15 +76,35 @@ final class DashboardViewModel {
 
         /// 窗口起点。用日历边界而不是「往前推 N 秒」——
         /// 标签写着「今日」，用户期望的是今天零点起算，不是过去 24 小时。
-        var start: Date {
-            let calendar = Calendar.current
-            let now = Date()
-            let component: Set<Calendar.Component> = switch self {
-            case .today: [.year, .month, .day]
-            case .week:  [.yearForWeekOfYear, .weekOfYear]
-            case .month: [.year, .month]
+        var start: Date { startDate(at: Date(), calendar: .current) }
+
+        /// 窗口终点（不含）：**下一个日历边界**。
+        ///
+        /// 跨过它，窗口里装的就是上一天 / 上一周 / 上一月的数据了 —— 得重查数据库
+        /// 把窗口挪到新的周期，「今日」才不会一直停在上一天。
+        var end: Date { endDate(at: Date(), calendar: .current) }
+
+        /// 与 `start` / `end` 同一套算法，但「现在」和日历由调用方给 ——
+        /// 跨天、跨月、夏令时这些边界只有拿固定日期才测得准。
+        func startDate(at now: Date, calendar: Calendar) -> Date {
+            interval(at: now, calendar: calendar)?.start ?? now
+        }
+
+        func endDate(at now: Date, calendar: Calendar) -> Date {
+            interval(at: now, calendar: calendar)?.end ?? now
+        }
+
+        /// 当前所处周期的日历区间。
+        ///
+        /// 起点和终点都交给日历算：终点不是「起点 + 86400」——
+        /// 夏令时切换那天只有 23 小时（或 25 小时），加固定秒数会落到隔天 01:00。
+        private func interval(at now: Date, calendar: Calendar) -> DateInterval? {
+            let component: Calendar.Component = switch self {
+            case .today: .day
+            case .week:  .weekOfYear
+            case .month: .month
             }
-            return calendar.date(from: calendar.dateComponents(component, from: now)) ?? now
+            return calendar.dateInterval(of: component, for: now)
         }
     }
 

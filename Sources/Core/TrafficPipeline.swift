@@ -39,6 +39,13 @@ actor TrafficPipeline {
 
     /// 待落库的时间桶：bucketStart → processKey → 增量
     private var buckets: [TimeInterval: [String: (bytesIn: Int64, bytesOut: Int64)]] = [:]
+
+    /// 当前统计窗口 `[windowStart, windowEnd)`，由 `reloadHistorical` 装载。
+    /// 默认 `0 ... .infinity`，即不裁剪（还没装载窗口时的兜底）。
+    private var windowStart: TimeInterval = 0
+    private var windowEnd: TimeInterval = .infinity
+    /// 有帧越过窗口终点 → 窗口过期，等 `CollectorService` 重查数据库
+    private var windowRefreshNeeded = false
     /// 桶里已聚合但还没写库的行数（用于日志/诊断）
     private(set) var pendingRowCount = 0
 
@@ -68,14 +75,26 @@ actor TrafficPipeline {
     /// 启动时调一次，之后每次切换时间范围再调一次 —— 所以必须是幂等的替换，
     /// 而不是累加。
     ///
+    /// - Parameters:
+    ///   - summaries: 该时间窗内已落库的汇总
+    ///   - since / until: 窗口边界（epoch 秒，左闭右开）。两者都参与裁剪：
+    ///     越过 `until` 的帧会把窗口标记为过期（`takeWindowRefreshRequest()`），
+    ///     由 `CollectorService` 重查数据库换到新的一天/一周/一月。
+    ///
     /// 账目关系：
     /// - `historical` = 该时间窗内已落库的字节
-    /// - `live` = 已采集但还没落库的字节（`flush()` 会把它转进 historical）
+    /// - `live` = 该时间窗内尚未落库的字节（`flush()` 会把它转进 historical）
     /// - `total = historical + live`，两边不重不漏
     ///
     /// 窗口变化后，原来有数据、新窗口里没有的进程，其 historical 要清零，
     /// 否则会把窗口外的流量留在总数里。已解析过的身份（含图标路径）保留不动。
-    func reloadHistorical(_ summaries: [ProcessSummary]) {
+    func reloadHistorical(_ summaries: [ProcessSummary],
+                          since: TimeInterval = 0,
+                          until: TimeInterval = .infinity) {
+        windowStart = since
+        windowEnd = until
+        windowRefreshNeeded = false
+
         var remaining = Set(stats.keys)
 
         for h in summaries {
@@ -101,6 +120,11 @@ actor TrafficPipeline {
             }
         }
 
+        // `live` 是内存桶的镜像，按新窗口重算 —— 窗口外的桶（跨零点时那个 23:59）
+        // 不能再算进去，否则「今日」会带上昨天最后一分钟的流量，而且一直带着。
+        // 放在历史替换之后：上面新建的条目同样要拿到自己未落库的那部分。
+        recomputeLiveFromBuckets()
+
         for key in remaining {
             guard var s = stats[key] else { continue }
             s.historicalIn = 0
@@ -113,6 +137,31 @@ actor TrafficPipeline {
         }
 
         lastPushedAt = .distantPast   // 让下一帧立刻把新窗口的数字推给 UI
+    }
+
+    /// 按当前窗口重算 `live`：内存桶的镜像只保留窗口内的那部分。
+    ///
+    /// 窗口外的桶照常落库（以后切到更大的窗口还要查它们），只是不属于当前窗口。
+    private func recomputeLiveFromBuckets() {
+        for key in Array(stats.keys) {
+            stats[key]?.liveIn = 0
+            stats[key]?.liveOut = 0
+        }
+        for (bucket, slot) in buckets where bucket >= windowStart {
+            for (key, v) in slot {
+                guard var s = stats[key] else { continue }
+                s.liveIn += v.bytesIn
+                s.liveOut += v.bytesOut
+                stats[key] = s
+            }
+        }
+    }
+
+    /// 取走「窗口已过期」标记（取一次即清零）。
+    /// 采集循环靠它知道该重查数据库了。
+    func takeWindowRefreshRequest() -> Bool {
+        defer { windowRefreshNeeded = false }
+        return windowRefreshNeeded
     }
 
     func setAlertRules(_ rules: [AlertRule]) { alertRules = rules }
@@ -147,6 +196,9 @@ actor TrafficPipeline {
         stats.removeAll()
         buckets.removeAll()
         pendingRowCount = 0
+        windowStart = 0
+        windowEnd = .infinity
+        windowRefreshNeeded = false
         alertThrottle.removeAll()
         resolver.reset()
     }
@@ -158,6 +210,12 @@ actor TrafficPipeline {
     /// - Returns: 需要推送给 UI 的快照；不到刷新节拍或窗口不可见时返回 nil。
     ///   这样主线程在多数帧上**完全不被唤醒**。
     func ingest(_ frame: TrafficFrame) -> DashboardSnapshot? {
+        // 帧越过窗口终点（跨零点 / 跨周 / 跨月）→ 当前窗口已过期，标记待重载。
+        // 这里只打标记：ingest 在采集主链路上，查库会把它变成一次磁盘 IO。
+        if frame.timestamp.timeIntervalSince1970 >= windowEnd {
+            windowRefreshNeeded = true
+        }
+
         // 首帧的「增量」是各连接自建立以来的累计值，只用来建立基线和活跃进程集合
         guard !frame.isBaseline else {
             for d in frame.deltas {
@@ -201,8 +259,11 @@ actor TrafficPipeline {
                 identity: v.identity,
                 icon: IconCatalog.icon(for: v.identity.displayName)
             )
-            s.liveIn += v.bytesIn
-            s.liveOut += v.bytesOut
+            // 只累计窗口内的：窗口外照样分桶落库，但不进当前窗口的统计
+            if bucket >= windowStart {
+                s.liveIn += v.bytesIn
+                s.liveOut += v.bytesOut
+            }
             s.rxRate = Double(v.bytesIn) / interval
             s.txRate = Double(v.bytesOut) / interval
             s.sampleCount += 1
@@ -325,8 +386,9 @@ actor TrafficPipeline {
         for bucket in ready { buckets.removeValue(forKey: bucket) }
         pendingRowCount = max(0, pendingRowCount - events.count)
 
-        // 已落库的部分从 live 转入 historical
-        for e in events {
+        // 已落库的部分从 live 转入 historical（只算窗口内的：窗口外的桶照常写库，
+        // 但不属于当前窗口，转进来的话「今日」就又会带上昨天那部分）
+        for e in events where e.timestamp >= windowStart {
             guard var s = stats[e.processKey] else { continue }
             s.historicalIn += e.bytesIn
             s.historicalOut += e.bytesOut

@@ -4,6 +4,40 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.7.8] — 2026-09-18
+
+### Fixed
+
+- **时间线只记得住均值，突发被摊平**。
+
+  落库按 60 秒分桶：`bytes` 是这一分钟的总和 —— 10 秒跑满 22 Gbps 的 iperf3
+  在图上只剩 3.8 Gbps，「峰值」统计也退化成「桶字节 ÷ 桶长」。这正是
+  「今日 iperf3 只有一个数据点，却用了 26.5 GB」看起来异常的原因：
+  总量没错，是分辨率不够。
+
+  现在每个桶额外记下**桶内见过的最高瞬时速率**（`peakIn` / `peakOut`）：
+
+  - 采集时逐帧取最大（2 秒采样的真实速率），随行落库；
+  - 时间线查询在展示桶上取 `MAX`，汇总栏的「峰值」与 tooltip 都用它；
+  - 老行没有这两列（迁移时补 `DEFAULT 0`），查询按**该行自己的**
+    `bytes / interval` 退回 —— 不能拿展示桶长度去除，否则以后把粒度改成
+    5s/10s 时老行会整体高估；
+  - tooltip 现在同时给出该点的均速、峰值、字节，以及它覆盖的时间跨度
+    （如 `07:58 · 1 分钟`），「一个点 = 一段聚合」这件事变得一目了然。
+
+  真机验证：新构建实例迁移真实库（老行原样保留、峰值补 0）后，跑 5 秒
+  loopback iperf3（限速 2 Gbps），落库行 `peakIn = 2000.1 Mbps`，
+  同一桶的均速只有 128.2 Mbps —— 突发不再被摊平。
+
+### Tests
+
+189 个（+3）：老行按行 `interval` 回退、展示桶聚合取最大，以及
+「帧 → 分桶 → flush → 时间线」全链路的峰值记录。
+
+### Docs
+
+- `docs/architecture.md` 第 6 节补上「分桶会把突发摊平」与峰值的算法。
+
 ## [0.7.7] — 2026-09-17
 
 ### Fixed

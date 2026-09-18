@@ -103,6 +103,18 @@ counts 回调给的 CFDictionary 有 **47 个键**（rtt、拥塞窗口、收发
 
 现在先在内存里按 60 秒时间桶聚合，一个桶一个进程只写一行 → 同样负载下约 5.8 万行/天，**降低 30 倍**（比值就是 `storageBucketSeconds / interval`）。写入用单条多值 `INSERT ... VALUES (?,…),(?,…)` 分块提交。
 
+代价是**分辨率**：桶里的 `bytes` 是一分钟的求和，10 秒跑满 22 Gbps 的测速
+在图上只剩「26.5 GB ÷ 60s ≈ 3.8 Gbps」。所以每个桶额外记一列峰值：
+
+```
+peakIn / peakOut = 桶内出现过的最高瞬时速率（逐帧取 max，B/s）
+```
+
+它是「真实发生过的速率」，而 `bytes / interval` 只是桶均值。查询展示桶时对
+峰值取 `MAX`；迁移前的老行没有这两列（补 `DEFAULT 0`），退回该行自己的
+`bytes / interval` —— 退回时也必须用**行自己的** `interval`，否则将来把落库
+粒度改成 5s/10s，老行会被展示桶长度除出一个虚高的「峰值」。
+
 ### 7. 图标为什么只在管线里存路径
 
 `NSImage` 不是 `Sendable`，不能跟着 `ProcessIdentifier` 穿过 actor 边界。

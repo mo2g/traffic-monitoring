@@ -387,3 +387,65 @@ final class DatabaseCompactionTests: XCTestCase {
         XCTAssertEqual(after.reduce(0) { $0 + $1.totalBytes }, beforeTotal)
     }
 }
+
+
+// ============================================================
+// MARK: - 时间线峰值（含迁移前的老数据）
+// ============================================================
+
+/// 落库桶会把一分钟内的突发摊平，所以每行额外记「桶内见过的最高瞬时速率」。
+/// 这里只测存储/查询这一层：
+/// - 老行（迁移前写库，峰值列默认 0）要退回**该行自己的** `bytes / interval`，
+///   而不是拿展示桶长度去除 —— 否则以后把粒度改成 5s/10s，老行会整体高估。
+/// - 一个展示桶里聚了多行时，流量求和、峰值取**最大**。
+final class TimelinePeakTests: XCTestCase {
+    var store: DataStore!
+    var tempDir: URL!
+
+    override func setUp() async throws {
+        tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("TimelinePeak_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        store = DataStore()
+        try await store.setup(at: tempDir.appendingPathComponent("peak.db"))
+    }
+
+    override func tearDown() async throws {
+        if let dir = tempDir { try? FileManager.default.removeItem(at: dir) }
+    }
+
+    private func event(at ts: TimeInterval, key: String, interval: TimeInterval,
+                       in bytesIn: Int64, out bytesOut: Int64,
+                       peakIn: Double = 0, peakOut: Double = 0) -> TrafficEvent {
+        TrafficEvent(id: nil, timestamp: ts, interval: interval, processKey: key,
+                     bundleId: nil, displayName: key,
+                     bytesIn: bytesIn, bytesOut: bytesOut, peakIn: peakIn, peakOut: peakOut)
+    }
+
+    func testLegacyRowFallsBackToItsOwnInterval() async throws {
+        let ts = 1_700_000_000.0
+        try await store.insertEvents([
+            event(at: ts, key: "legacy", interval: 60, in: 6_000, out: 1_200),
+        ])
+
+        let points = try await store.queryTimeline(processKey: "legacy", since: ts - 1, bucketSeconds: 300)
+        let point = try XCTUnwrap(points.first)
+        XCTAssertEqual(point.peakIn, 100, accuracy: 0.001, "6000 / 60s")
+        XCTAssertEqual(point.peakOut, 20, accuracy: 0.001, "1200 / 60s")
+    }
+
+    func testAggregatedBucketTakesMaxPeak() async throws {
+        let ts = 1_700_000_000.0
+        try await store.insertEvents([
+            event(at: ts, key: "burst", interval: 60, in: 600, out: 0, peakIn: 900),
+            event(at: ts + 60, key: "burst", interval: 60, in: 300, out: 0,
+                  peakIn: 12_345, peakOut: 500),
+        ])
+
+        let points = try await store.queryTimeline(processKey: "burst", since: ts - 1, bucketSeconds: 300)
+        let point = try XCTUnwrap(points.first)
+        XCTAssertEqual(point.bytesIn, 900, "同一个展示桶里流量求和")
+        XCTAssertEqual(point.peakIn, 12_345, accuracy: 0.001, "峰值取最大，不是平均也不是最后一行")
+        XCTAssertEqual(point.peakOut, 500, accuracy: 0.001)
+    }
+}

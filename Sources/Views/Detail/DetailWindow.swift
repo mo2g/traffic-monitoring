@@ -157,9 +157,10 @@ struct DetailWindow: View {
     private var summaryBar: some View {
         let totalIn = vm.timeline.reduce(0) { $0 + $1.bytesIn }
         let totalOut = vm.timeline.reduce(0) { $0 + $1.bytesOut }
-        let bucket = TimelineBucket.size(for: range)
-        let peakIn = Double(vm.timeline.map(\.bytesIn).max() ?? 0) / bucket
-        let peakOut = Double(vm.timeline.map(\.bytesOut).max() ?? 0) / bucket
+        // 峰值取桶内记下的最高瞬时速率，而不是「桶字节 ÷ 桶长」——
+        // 后者是均值，10 秒跑满 22 Gbps 会被摊成 3.8 Gbps
+        let peakIn = vm.timeline.map(\.peakIn).max() ?? 0
+        let peakOut = vm.timeline.map(\.peakOut).max() ?? 0
 
         return HStack(spacing: 0) {
             stat(L("detail.liveDownload"), ByteFormatter.rateString(bytesPerSecond: live?.rxRate ?? 0),
@@ -352,11 +353,17 @@ private struct TrafficChart: View {
             ? .dateTime.hour().minute()
             : .dateTime.month(.defaultDigits).day().hour().minute()
         return VStack(alignment: .leading, spacing: 3) {
-            Text(Date(timeIntervalSince1970: point.timestamp).formatted(stamp))
-                .font(.system(size: 11, weight: .semibold))
+            // 「07:58 · 1 分钟」：一个点代表的是一段聚合，不是瞬时采样
+            HStack(spacing: 4) {
+                Text(Date(timeIntervalSince1970: point.timestamp).formatted(stamp))
+                Text("· \(spanLabel(bucket))").foregroundStyle(.secondary)
+            }
+            .font(.system(size: 11, weight: .semibold))
             HStack(spacing: 10) {
-                legend(.blue, "↓", rate: Double(point.bytesIn) / bucket, bytes: point.bytesIn)
-                legend(.red, "↑", rate: Double(point.bytesOut) / bucket, bytes: point.bytesOut)
+                legend(.blue, "↓", average: Double(point.bytesIn) / bucket,
+                       peak: point.peakIn, bytes: point.bytesIn)
+                legend(.red, "↑", average: Double(point.bytesOut) / bucket,
+                       peak: point.peakOut, bytes: point.bytesOut)
             }
         }
         .padding(.horizontal, 9).padding(.vertical, 6)
@@ -365,12 +372,29 @@ private struct TrafficChart: View {
         .allowsHitTesting(false)
     }
 
-    private func legend(_ color: Color, _ arrow: String, rate: Double, bytes: Int64) -> some View {
+    /// 速率两行：均速一行，峰值明显高出时再补一行 ——
+    /// 平稳流量下两者几乎重合，显示两遍只会把气泡撑大。
+    private func legend(_ color: Color, _ arrow: String,
+                        average: Double, peak: Double, bytes: Int64) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("\(arrow) \(ByteFormatter.rateString(bytesPerSecond: rate))")
+            Text("\(arrow) \(ByteFormatter.rateString(bytesPerSecond: average))")
                 .font(.system(size: 10, design: .monospaced)).foregroundStyle(color)
+            if peak > average * 1.05 {
+                Text("\(arrow) \(L("detail.peakShort")) \(ByteFormatter.rateString(bytesPerSecond: peak))")
+                    .font(.system(size: 9, design: .monospaced)).foregroundStyle(color.opacity(0.75))
+            }
             Text(ByteFormatter.string(bytes: bytes))
                 .font(.system(size: 9, design: .monospaced)).foregroundStyle(.secondary)
         }
+    }
+
+    /// 「1 分钟 / 5 分钟」：交回系统按当前语言排版，不再加一条文案键
+    private func spanLabel(_ seconds: TimeInterval) -> String {
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 1
+        formatter.zeroFormattingBehavior = .dropAll
+        return formatter.string(from: seconds) ?? "\(Int(seconds))s"
     }
 }

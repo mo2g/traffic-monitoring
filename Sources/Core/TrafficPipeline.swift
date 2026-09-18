@@ -37,8 +37,17 @@ actor TrafficPipeline {
     private var stats: [String: ProcessStats] = [:]
     private var resolver = ProcessIdentityResolver()
 
+    /// 一个进程在一个落库桶里的聚合
+    private struct BucketSlot {
+        var bytesIn: Int64 = 0
+        var bytesOut: Int64 = 0
+        /// 桶内见过的最高瞬时速率（B/s）。桶会把突发摊平，峰值单独留下来。
+        var peakIn: Double = 0
+        var peakOut: Double = 0
+    }
+
     /// 待落库的时间桶：bucketStart → processKey → 增量
-    private var buckets: [TimeInterval: [String: (bytesIn: Int64, bytesOut: Int64)]] = [:]
+    private var buckets: [TimeInterval: [String: BucketSlot]] = [:]
 
     /// 当前统计窗口 `[windowStart, windowEnd)`，由 `reloadHistorical` 装载。
     /// 默认 `0 ... .infinity`，即不裁剪（还没装载窗口时的兜底）。
@@ -264,17 +273,24 @@ actor TrafficPipeline {
                 s.liveIn += v.bytesIn
                 s.liveOut += v.bytesOut
             }
-            s.rxRate = Double(v.bytesIn) / interval
-            s.txRate = Double(v.bytesOut) / interval
+            let rateIn = Double(v.bytesIn) / interval
+            let rateOut = Double(v.bytesOut) / interval
+            s.rxRate = rateIn
+            s.txRate = rateOut
             s.sampleCount += 1
             if sparklineEnabled { Self.push(s.rxRate + s.txRate, into: &s.history) }
             stats[key] = s
 
-            // 分桶聚合，稍后批量落库
+            // 分桶聚合，稍后批量落库。峰值取桶内最大 —— 这一帧的瞬时速率
+            // 就是一分钟里真实发生过的速率，落库后仍然拿得回来。
             if buckets[bucket]?[key] == nil { pendingRowCount += 1 }
             var slot = buckets[bucket] ?? [:]
-            let cur = slot[key] ?? (0, 0)
-            slot[key] = (cur.bytesIn + v.bytesIn, cur.bytesOut + v.bytesOut)
+            var cell = slot[key] ?? BucketSlot()
+            cell.bytesIn += v.bytesIn
+            cell.bytesOut += v.bytesOut
+            cell.peakIn = max(cell.peakIn, rateIn)
+            cell.peakOut = max(cell.peakOut, rateOut)
+            slot[key] = cell
             buckets[bucket] = slot
         }
 
@@ -370,7 +386,9 @@ actor TrafficPipeline {
                     bundleId: s?.identity.bundleId,
                     displayName: s?.identity.displayName ?? key,
                     bytesIn: v.bytesIn,
-                    bytesOut: v.bytesOut
+                    bytesOut: v.bytesOut,
+                    peakIn: v.peakIn,
+                    peakOut: v.peakOut
                 ))
             }
         }

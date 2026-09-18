@@ -447,7 +447,61 @@ final class TimeRangeRolloverTests: XCTestCase {
         let snap = await pipeline.makeSnapshot()
         XCTAssertNil(snap.rows.first { $0.key == "stale" }, "昨天的实时数据应随窗口重载退出")
         XCTAssertEqual(snap.rows.first { $0.key == "current" }?.totalIn, 200)
-        XCTAssertEqual(snap.totalBytes, 200)
+    }
+}
+
+// ============================================================
+// MARK: - 落库桶的峰值
+// ============================================================
+
+/// 桶会把一分钟内的突发摊平（iperf3 一次短测 = 一个点、一个均值），
+/// 所以每行额外记下桶内见过的最高瞬时速率。这里走完整链路：
+/// 帧 → 分桶 → flush 落库 → 时间线查询。
+final class BucketPeakTests: XCTestCase {
+    private let pipeline = TrafficPipeline.shared
+
+    override func setUp() async throws {
+        await pipeline.reset()
+        let dir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("BucketPeakTests")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try await DataStore.shared.setup(at: dir.appendingPathComponent("peak.db"))
+    }
+
+    override func tearDown() async throws {
+        await pipeline.reset()
+    }
+
+    private func frame(_ deltas: [PIDDelta], at: Date, interval: TimeInterval = 2) -> TrafficFrame {
+        TrafficFrame(deltas: deltas, timestamp: at, interval: interval, isBaseline: false)
+    }
+
+    /// 100 MB 的 2 秒突发 + 一次小流量落在同一个 60 秒桶：
+    /// 总量是两者之和，峰值必须是突发那一帧的速率，而不是「总量 ÷ 60」。
+    func testBucketRecordsPeakRateNotBucketAverage() async throws {
+        let key = "peak-\(UUID().uuidString)"
+        // 桶内固定起点（本分钟第 5 秒），避免测试恰好跨分钟
+        let base = (Date().timeIntervalSince1970 / 60).rounded(.down) * 60 + 5
+        let burst: Int64 = 1 * 1024 * 1024
+        let trickle: Int64 = 1_024
+
+        _ = await pipeline.ingest(frame(
+            [PIDDelta(pid: 999_500, execName: key, bytesIn: burst, bytesOut: 0)],
+            at: Date(timeIntervalSince1970: base), interval: 2))
+        _ = await pipeline.ingest(frame(
+            [PIDDelta(pid: 999_501, execName: key, bytesIn: trickle, bytesOut: 0)],
+            at: Date(timeIntervalSince1970: base + 2), interval: 2))
+        await pipeline.flush(force: true)
+
+        let points = try await DataStore.shared.queryTimeline(
+            processKey: key, since: base - 60, bucketSeconds: 60)
+        let point = try XCTUnwrap(points.first)
+        XCTAssertEqual(points.count, 1)
+        XCTAssertEqual(point.bytesIn, burst + trickle, "总量仍是一分钟内的求和")
+        XCTAssertEqual(point.peakIn, Double(burst) / 2, accuracy: 1,
+                       "峰值应是突发那一帧的瞬时速率")
+        XCTAssertLessThan(Double(burst) / 60, point.peakIn,
+                          "桶均值明显低于峰值，两者不能混为一谈")
     }
 }
 

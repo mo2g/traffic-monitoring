@@ -74,6 +74,7 @@
 "detail.total"             = "Total";
 "detail.peakDownload"      = "Peak down";
 "detail.peakUpload"        = "Peak up";
+"detail.peakShort"       = "peak";
 "detail.dataPoints"        = "Points";
 "detail.noData"            = "No traffic recorded in this period";
 "chart.axis.time"          = "Time";

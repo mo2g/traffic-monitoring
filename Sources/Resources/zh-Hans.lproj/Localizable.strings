@@ -74,6 +74,7 @@
 "detail.total"             = "合计";
 "detail.peakDownload"      = "峰值下载";
 "detail.peakUpload"        = "峰值上传";
+"detail.peakShort"       = "峰";
 "detail.dataPoints"        = "数据点";
 "detail.noData"            = "这段时间没有记录到流量";
 "chart.axis.time"          = "时间";

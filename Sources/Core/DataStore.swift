@@ -47,6 +47,8 @@ actor DataStore {
                 t.column("displayName", .text).notNull()
                 t.column("bytesIn", .integer).notNull()
                 t.column("bytesOut", .integer).notNull()
+                t.column("peakIn", .double).notNull().defaults(to: 0)
+                t.column("peakOut", .double).notNull().defaults(to: 0)
             }
 
             // 复合索引：按时间 + 进程查
@@ -54,6 +56,16 @@ actor DataStore {
                           on: "trafficEvent",
                           columns: ["timestamp", "processKey"],
                           ifNotExists: true)
+
+            // 迁移：老库补上峰值列。默认 0 = 未知，查询时退回该行自己的
+            // `bytes / interval` —— 拿展示桶长度去除会让老数据整体高估。
+            let columns = try db.columns(in: "trafficEvent").map(\.name)
+            if !columns.contains("peakIn") {
+                try db.alter(table: "trafficEvent") { t in
+                    t.add(column: "peakIn", .double).notNull().defaults(to: 0)
+                    t.add(column: "peakOut", .double).notNull().defaults(to: 0)
+                }
+            }
         }
 
         dbWriter = writer
@@ -72,10 +84,10 @@ actor DataStore {
             for chunk in stride(from: 0, to: events.count, by: Constants.insertChunkSize) {
                 let slice = events[chunk ..< min(chunk + Constants.insertChunkSize, events.count)]
                 let placeholders = Array(
-                    repeating: "(?,?,?,?,?,?,?)", count: slice.count
+                    repeating: "(?,?,?,?,?,?,?,?,?)", count: slice.count
                 ).joined(separator: ",")
                 var args: [DatabaseValueConvertible?] = []
-                args.reserveCapacity(slice.count * 7)
+                args.reserveCapacity(slice.count * 9)
                 for e in slice {
                     args.append(e.timestamp)
                     args.append(e.interval)
@@ -84,11 +96,14 @@ actor DataStore {
                     args.append(e.displayName)
                     args.append(e.bytesIn)
                     args.append(e.bytesOut)
+                    args.append(e.peakIn)
+                    args.append(e.peakOut)
                 }
                 try db.execute(
                     sql: """
                         INSERT INTO trafficEvent
-                        (timestamp, interval, processKey, bundleId, displayName, bytesIn, bytesOut)
+                        (timestamp, interval, processKey, bundleId, displayName,
+                         bytesIn, bytesOut, peakIn, peakOut)
                         VALUES \(placeholders)
                         """,
                     arguments: StatementArguments(args)
@@ -210,7 +225,12 @@ actor DataStore {
             let rows = try Row.fetchAll(db, sql: """
                 SELECT CAST(timestamp / ? AS INTEGER) * ? AS bucket,
                        SUM(bytesIn)  AS totalIn,
-                       SUM(bytesOut) AS totalOut
+                       SUM(bytesOut) AS totalOut,
+                       -- 峰值逐行取较大的那个（老行没有峰值为 0 → 退回该行自己的
+                       -- bytes/interval），再在展示桶里取最大。
+                       -- 不能拿展示桶长度去除：换粒度后老行会整体高估。
+                       MAX(MAX(peakIn,  bytesIn  / MAX(interval, 0.1))) AS peakIn,
+                       MAX(MAX(peakOut, bytesOut / MAX(interval, 0.1))) AS peakOut
                 FROM trafficEvent
                 WHERE timestamp >= ? AND timestamp <= ? AND processKey = ?
                 GROUP BY bucket
@@ -221,7 +241,9 @@ actor DataStore {
                 TimelinePoint(
                     timestamp: row["bucket"],
                     bytesIn: row["totalIn"],
-                    bytesOut: row["totalOut"]
+                    bytesOut: row["totalOut"],
+                    peakIn: row["peakIn"],
+                    peakOut: row["peakOut"]
                 )
             }
         }
@@ -310,6 +332,10 @@ struct TimelinePoint: Identifiable, Equatable {
     let timestamp: TimeInterval
     let bytesIn: Int64
     let bytesOut: Int64
+    /// 该展示桶内观测到的最高速率（B/s）。
+    /// 老数据没有峰值列，由查询按每行自己的 `interval` 退回。
+    var peakIn: Double = 0
+    var peakOut: Double = 0
 
     var totalBytes: Int64 { bytesIn + bytesOut }
 }

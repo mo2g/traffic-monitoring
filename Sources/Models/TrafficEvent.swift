@@ -28,6 +28,16 @@ struct TrafficEvent: Identifiable, Codable {
     /// 本次间隔内的增量发送字节
     let bytesOut: Int64
 
+    /// 落库桶内观测到的最高接收速率（B/s）。
+    ///
+    /// 桶会把一分钟里的突发摊平：10 秒跑满 22 Gbps，桶均值只剩 3.8 Gbps。
+    /// 峰值单独记一列，时间线才还原得出真实突发。
+    /// 0 表示迁移前写下的老数据 —— 查询时退回该行自己的 `bytesIn / interval`。
+    var peakIn: Double = 0
+
+    /// 同上，发送方向
+    var peakOut: Double = 0
+
     /// 速率（bytesIn / interval）
     var rxRate: Double {
         Double(bytesIn) / max(interval, 0.1)
@@ -63,5 +73,7 @@ extension TrafficEvent: TableRecord, FetchableRecord, MutablePersistableRecord {
         static let displayName = Column(CodingKeys.displayName)
         static let bytesIn = Column(CodingKeys.bytesIn)
         static let bytesOut = Column(CodingKeys.bytesOut)
+        static let peakIn = Column(CodingKeys.peakIn)
+        static let peakOut = Column(CodingKeys.peakOut)
     }
 }

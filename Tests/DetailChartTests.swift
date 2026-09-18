@@ -151,26 +151,51 @@ final class DetailChartGapTests: XCTestCase {
                              "\(style.rawValue)：上传整段都在零轴下方（镜像），不叠在一起")
     }
 
-    /// **回归**：两个点相隔 12 小时、中间没有任何数据，不能连成线。
-    /// 只测分段函数不够 —— 这里把图真的渲染成位图数像素。
-    func testGapIsNotConnected() {
+    /// **回归**：没有采集的时段（机器休眠 / 应用没跑）——
+    /// 折线补 0 连起来（不然会断成一截截），同时用灰带标出「这里没数据」，
+    /// 免得把「没测到」看成「测到 0」。
+    func testGapIsZeroFilledAndMarked() {
         let now = Date()
-        let points = [
-            TimelinePoint(timestamp: now.addingTimeInterval(-18 * 3_600).timeIntervalSince1970,
-                          bytesIn: 2_000_000, bytesOut: 0),
-            TimelinePoint(timestamp: now.addingTimeInterval(-6 * 3_600).timeIntervalSince1970,
-                          bytesIn: 2_000_000, bytesOut: 0),
-        ]
+        let bucket: TimeInterval = 300
+        let start = now.addingTimeInterval(-24 * 3_600).timeIntervalSince1970
+        var points: [TimelinePoint] = []
+        for index in 0 ... Int(24 * 3_600 / bucket) {
+            let offsetHours = Double(index) * bucket / 3_600      // 0 = -24h
+            // -17h…-13h 这 4 小时整机没采集；其余时间采集正常（没有流量就是真实 0）
+            let covered = !(offsetHours > 7 && offsetHours < 11)
+            // -18h 与 -12h 各有一处突发
+            let burst = abs(offsetHours - 6) < 0.1 || abs(offsetHours - 12) < 0.1
+            points.append(TimelinePoint(timestamp: start + Double(index) * bucket,
+                                        bytesIn: burst ? 2_000_000 : 0,
+                                        bytesOut: 0,
+                                        isCovered: covered))
+        }
         let rep = render(points)
-        // 两个孤点各自要画出来（否则「中间没有线」是假通过），
-        // 且下载/上传两个方向都要在（上传孤点曾经落回系统强调色变成蓝点）
-        XCTAssertGreaterThan(bluePixels(rep, xFrom: 0.20, xTo: 0.34), 0, "左端点应该画出来")
-        XCTAssertGreaterThan(bluePixels(rep, xFrom: 0.66, xTo: 0.80), 0, "右端点应该画出来")
-        XCTAssertGreaterThan(redPixels(rep, xFrom: 0.20, xTo: 0.34), 0, "左端点应该有上传方向的点")
-        XCTAssertGreaterThan(redPixels(rep, xFrom: 0.66, xTo: 0.80), 0, "右端点应该有上传方向的点")
-        // 中间不能有任何东西把两端连起来
-        XCTAssertEqual(bluePixels(rep, xFrom: 0.45, xTo: 0.55), 0, "空洞不能被连成线")
-        XCTAssertEqual(redPixels(rep, xFrom: 0.45, xTo: 0.55), 0, "上行也不能跨空洞连线")
+
+        // 空洞落在 x ≈ 0.29…0.46（-17h…-13h），取中段
+        let gray = firstColorColumn(rep, in: 0.33 ... 0.42) { color in
+            color.alphaComponent > 0.05 && color.alphaComponent < 0.5
+                && abs(color.redComponent - color.blueComponent) < 0.1
+                && color.redComponent < 0.9
+        }
+        XCTAssertNotNil(gray, "没采集的时段要画灰带")
+
+        // 0 值处两条线重合，后画的上行线会盖住下行线 —— 只要有一条在线即可
+        let linePixels = bluePixels(rep, xFrom: 0.33, xTo: 0.42)
+            + redPixels(rep, xFrom: 0.33, xTo: 0.42)
+        XCTAssertGreaterThan(linePixels, 0, "补 0 之后折线要连续穿过空洞，不能断成一截截")
+    }
+
+    /// 在指定 x 比例区间里找第一列满足条件的像素
+    private func firstColorColumn(_ rep: NSBitmapImageRep, in range: ClosedRange<Double>,
+                                  where matches: (NSColor) -> Bool) -> Int? {
+        for x in Int(Double(rep.pixelsWide) * range.lowerBound) ..< Int(Double(rep.pixelsWide) * range.upperBound) {
+            for y in 0 ..< rep.pixelsHigh {
+                guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if matches(color) { return x }
+            }
+        }
+        return nil
     }
 
 }

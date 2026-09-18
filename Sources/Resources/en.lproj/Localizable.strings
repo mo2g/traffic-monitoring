@@ -78,6 +78,7 @@
 "detail.layout.help"      = "Upload above the zero axis, or mirrored below";
 "detail.layout.above"     = "Same axis";
 "detail.layout.mirror"    = "Mirrored";
+"detail.noCoverage"       = "No data collected here (Mac asleep or app not running)";
 "detail.dataPoints"        = "Points";
 "detail.noData"            = "No traffic recorded in this period";
 "chart.axis.time"          = "Time";

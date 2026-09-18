@@ -306,6 +306,47 @@ struct TrafficChart: View {
         }
     }
 
+    /// 没采集的时段（连续的 isCovered = false），画成灰带
+    private struct CoverageGap: Identifiable {
+        var id: TimeInterval { start.timeIntervalSince1970 }
+        let start: Date
+        let end: Date
+    }
+
+    private var coverageGaps: [CoverageGap] {
+        var gaps: [CoverageGap] = []
+        var runStart: TimeInterval?
+        var runEnd: TimeInterval?
+        for point in points {
+            if point.isCovered {
+                if let start = runStart, let end = runEnd {
+                    gaps.append(CoverageGap(start: Date(timeIntervalSince1970: start),
+                                            end: Date(timeIntervalSince1970: end)))
+                }
+                runStart = nil
+                runEnd = nil
+            } else {
+                if runStart == nil { runStart = point.timestamp }
+                runEnd = point.timestamp + bucket
+            }
+        }
+        if let start = runStart, let end = runEnd {
+            gaps.append(CoverageGap(start: Date(timeIntervalSince1970: start),
+                                    end: Date(timeIntervalSince1970: end)))
+        }
+        return gaps
+    }
+
+    /// 纵轴范围：从样本推出来并留一点余量，灰带要铺满整个绘图区高度。
+    private var rateRange: ClosedRange<Double> {
+        let values = samples.map(\.rate)
+        let lower = min(values.min() ?? 0, 0)
+        let upper = max(values.max() ?? 0, 0)
+        guard upper > lower else { return 0 ... 1 }
+        let pad = (upper - lower) * 0.06
+        return (lower - pad) ... (upper + pad)
+    }
+
     private var selectedPoint: TimelinePoint? {
         guard let selected,
               let nearest = points.min(by: {
@@ -324,6 +365,16 @@ struct TrafficChart: View {
             RuleMark(y: .value(L("chart.axis.rate"), 0))
                 .foregroundStyle(.secondary.opacity(0.35))
                 .lineStyle(StrokeStyle(lineWidth: 1))
+
+            // 没采集的时段：补 0 让折线连续，但这里铺一层浅灰带，
+            // 说明「这一段没有测量」而不是「测到 0」
+            ForEach(coverageGaps) { gap in
+                RectangleMark(xStart: .value(L("chart.axis.time"), gap.start),
+                              xEnd: .value(L("chart.axis.time"), gap.end),
+                              yStart: .value(L("chart.axis.rate"), rateRange.lowerBound),
+                              yEnd: .value(L("chart.axis.rate"), rateRange.upperBound))
+                    .foregroundStyle(Color.gray.opacity(0.10))
+            }
 
             ForEach(samples) { s in
                 switch style {
@@ -374,6 +425,7 @@ struct TrafficChart: View {
         // 固定成「所选跨度」而不是按数据自适应：只有一两个点时，
         // 自适应会把轴压到那两点上，位置信息就没了
         .chartXScale(domain: Date().addingTimeInterval(-range) ... Date())
+        .chartYScale(domain: rateRange)
         .chartForegroundStyleScale([L("chart.series.download"): seriesColor(L("chart.series.download")),
                                     L("chart.series.upload"): seriesColor(L("chart.series.upload"))])
         .chartLegend(position: .top, alignment: .leading, spacing: 8)
@@ -456,11 +508,16 @@ struct TrafficChart: View {
                 Text("· \(spanLabel(bucket))").foregroundStyle(.secondary)
             }
             .font(.system(size: 11, weight: .semibold))
-            HStack(spacing: 10) {
-                legend(.blue, "↓", average: Double(point.bytesIn) / bucket,
-                       peak: point.peakIn, bytes: point.bytesIn)
-                legend(.red, "↑", average: Double(point.bytesOut) / bucket,
-                       peak: point.peakOut, bytes: point.bytesOut)
+            if point.isCovered {
+                HStack(spacing: 10) {
+                    legend(.blue, "↓", average: Double(point.bytesIn) / bucket,
+                           peak: point.peakIn, bytes: point.bytesIn)
+                    legend(.red, "↑", average: Double(point.bytesOut) / bucket,
+                           peak: point.peakOut, bytes: point.bytesOut)
+                }
+            } else {
+                Text(L("detail.noCoverage"))
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 9).padding(.vertical, 6)

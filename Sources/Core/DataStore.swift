@@ -267,10 +267,25 @@ actor DataStore {
                 byBucket[point.timestamp] = point
             }
 
-            // 有采集的桶逐个出点（没流量就是 0）；没采集的桶不出现 = 洞
-            return covered.sorted().map { bucket in
-                byBucket[bucket] ?? TimelinePoint(timestamp: bucket, bytesIn: 0, bytesOut: 0)
+            // 把区间里的每个桶都铺出来：有流量的用真实值，采集在跑但没流量的补 0，
+            // 完全没采集的也补 0 但标 isCovered = false（图上画灰带）—— 折线因此连续，
+            // 同时不会把「没测到」当成「测到 0」。
+            // 从「包含 since 的那个桶」开始铺（floor）：聚合查询用的也是这个桶，
+            // 用 ceil 会把 since 所在桶里的数据行挤出网格
+            let first = (since / bucketSeconds).rounded(.down) * bucketSeconds
+            let last = (until / bucketSeconds).rounded(.down) * bucketSeconds
+            guard first <= last else { return [] }
+
+            var points: [TimelinePoint] = []
+            points.reserveCapacity(Int((last - first) / bucketSeconds) + 1)
+            var bucket = first
+            while bucket <= last {
+                points.append(byBucket[bucket]
+                    ?? TimelinePoint(timestamp: bucket, bytesIn: 0, bytesOut: 0,
+                                     isCovered: covered.contains(bucket)))
+                bucket += bucketSeconds
             }
+            return points
         }
     }
 
@@ -361,6 +376,9 @@ struct TimelinePoint: Identifiable, Equatable {
     /// 老数据没有峰值列，由查询按每行自己的 `interval` 退回。
     var peakIn: Double = 0
     var peakOut: Double = 0
+    /// 这个桶里监控器**有没有在采集**（任何一个进程写过行）。
+    /// false = 机器休眠 / 应用没在跑，字节数是补出来的 0，图上要标灰带。
+    var isCovered: Bool = true
 
     var totalBytes: Int64 { bytesIn + bytesOut }
 }

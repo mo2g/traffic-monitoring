@@ -481,7 +481,8 @@ final class BucketPeakTests: XCTestCase {
     func testBucketRecordsPeakRateNotBucketAverage() async throws {
         let key = "peak-\(UUID().uuidString)"
         // 桶内固定起点（本分钟第 5 秒），避免测试恰好跨分钟
-        let base = (Date().timeIntervalSince1970 / 60).rounded(.down) * 60 + 5
+        let minuteStart = (Date().timeIntervalSince1970 / 60).rounded(.down) * 60
+        let base = minuteStart + 5
         let burst: Int64 = 1 * 1024 * 1024
         let trickle: Int64 = 1_024
 
@@ -493,8 +494,9 @@ final class BucketPeakTests: XCTestCase {
             at: Date(timeIntervalSince1970: base + 2), interval: 2))
         await pipeline.flush(force: true)
 
+        // 收窄到一个桶（整窗网格的点数由 since/until 决定）
         let points = try await DataStore.shared.queryTimeline(
-            processKey: key, since: base - 60, bucketSeconds: 60)
+            processKey: key, since: minuteStart, until: minuteStart + 1, bucketSeconds: 60)
         let point = try XCTUnwrap(points.first)
         XCTAssertEqual(points.count, 1)
         XCTAssertEqual(point.bytesIn, burst + trickle, "总量仍是一分钟内的求和")

@@ -113,16 +113,19 @@ final class DataStoreTests: XCTestCase {
         let timeline = try await store.queryTimeline(
             processKey: "Chrome", since: now - 3600, bucketSeconds: 60
         )
-        // All points in timeline should have positive timestamps
+        // 整窗网格：从「包含 since 的桶」铺到「包含 until 的桶」
         XCTAssertGreaterThan(timeline.count, 0)
         for point in timeline {
-            XCTAssertGreaterThan(point.timestamp, now - 3600)
+            XCTAssertGreaterThanOrEqual(point.timestamp, now - 3600 - 60,
+                                        "最多早一个桶（首桶是跨在窗口起点上的）")
+            XCTAssertLessThanOrEqual(point.timestamp, now)
         }
     }
 
     /// 查一个从没传过流量的进程：结论不是「没有数据」，而是「这段时间它一直是 0」——
     /// 采集器在跑（同一分钟别的进程有行），所以有采集的桶都要回 0。
-    /// 只有整分钟谁都没数据（应用关了 / 机器睡了）才不返回，画图时断成洞。
+    /// 整分钟谁都没数据（应用关了 / 机器睡了）也回 0（让折线连续），
+    /// 但标 `isCovered = false`，图上画灰带说明「这段没有测量」。
     func testQueryTimelineForUnknownProcessIsZeroNotEmpty() async throws {
         let now = Date().timeIntervalSince1970
         let events = [TrafficEvent(
@@ -135,8 +138,10 @@ final class DataStoreTests: XCTestCase {
         let timeline = try await store.queryTimeline(
             processKey: "DoesNotExist", since: now - 3600
         )
-        XCTAssertEqual(timeline.count, 1, "只有 now 那一分钟有采集")
-        XCTAssertEqual(timeline.first?.totalBytes, 0, "没传过 = 0，而不是空洞")
+        // 现在是整窗网格：每格都是 0，只有真正有采集的那一格 isCovered = true
+        XCTAssertFalse(timeline.isEmpty)
+        XCTAssertTrue(timeline.allSatisfy { $0.totalBytes == 0 }, "没传过 = 0")
+        XCTAssertEqual(timeline.filter(\.isCovered).count, 1, "只有 now 那一格有采集")
     }
 
     // MARK: - Delete
@@ -488,7 +493,7 @@ final class TimelineCoverageTests: XCTestCase {
                      bytesIn: bytesIn, bytesOut: bytesOut, peakIn: peakIn, peakOut: 0)
     }
 
-    func testFillsIdleBucketsWithZeroAndSkipsUncoveredOnes() async throws {
+    func testFillsIdleBucketsWithZeroAndMarksUncoveredOnes() async throws {
         let base = 1_700_000_040.0            // 整分钟对齐
         try await store.insertEvents([
             // 别的进程在这三分钟有流量 → 采集器在跑
@@ -501,13 +506,17 @@ final class TimelineCoverageTests: XCTestCase {
         ])
 
         let points = try await store.queryTimeline(
-            processKey: "mine", since: base - 1, until: base + 200, bucketSeconds: 60)
+            processKey: "mine", since: base, until: base + 200, bucketSeconds: 60)
 
-        XCTAssertEqual(points.map(\.timestamp), [base, base + 60, base + 120],
-                       "base+180 谁都没数据 → 不返回（空洞）")
+        // 没采集的桶也要返回（补 0 让折线连续），但标记出来，图上会画成灰带
+        XCTAssertEqual(points.map(\.timestamp), [base, base + 60, base + 120, base + 180])
         XCTAssertEqual(points[0].peakIn, 500, accuracy: 0.001)
+        XCTAssertTrue(points[0].isCovered)
         XCTAssertEqual(points[1].bytesIn, 0, "采集器在跑、进程没流量 = 真实的 0")
-        XCTAssertEqual(points[1].bytesOut, 0)
+        XCTAssertTrue(points[1].isCovered)
         XCTAssertEqual(points[2].bytesIn, 2_000)
+        XCTAssertTrue(points[2].isCovered)
+        XCTAssertEqual(points[3].bytesIn, 0, "没人采集的桶补 0")
+        XCTAssertFalse(points[3].isCovered, "但要标记成「没有采集」，不能当成真实 0")
     }
 }

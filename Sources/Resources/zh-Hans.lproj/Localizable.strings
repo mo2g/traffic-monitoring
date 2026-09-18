@@ -78,6 +78,7 @@
 "detail.layout.help"      = "上行画在零轴上方，或镜像到下方";
 "detail.layout.above"     = "同轴";
 "detail.layout.mirror"    = "镜像";
+"detail.noCoverage"       = "这段时间没有采集（机器休眠或应用未运行）";
 "detail.dataPoints"        = "数据点";
 "detail.noData"            = "这段时间没有记录到流量";
 "chart.axis.time"          = "时间";

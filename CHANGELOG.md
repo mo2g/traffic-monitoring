@@ -4,6 +4,29 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.7.12] — 2026-09-18
+
+### Changed
+
+- **没有采集的时段不再留断口，而是补 0 + 灰带标记**。
+
+  此前「整分钟谁都没有数据」（机器休眠 / 应用没在跑）会在折线上留一个缺口，
+  看上去像图画坏了。现在：
+
+  - 折线**补 0 连续** —— 机器睡着时不可能有流量，0 是事实；
+  - 该时段铺一层**浅灰带**，hover 的 tooltip 说明「这段时间没有采集」——
+    应用没在跑时 0 只能算推测，不能和「测到 0」混为一谈；
+  - 查询层相应改成返回**整窗网格**（区间里每个桶一个点），`TimelinePoint`
+    增加 `isCovered`；区间合计与峰值不受影响（补的 0 不参与求和）。
+
+  真机对照：最近 7 天最长的几段空白（95 / 68 / 59 分钟）与 `pmset` 日志里的
+  `Clamshell Sleep` / `Maintenance Sleep` 完全吻合 —— 那些空白本来就是机器在睡觉。
+
+### Tests
+
+196 个（改写 2 条）：存储层断言「没采集的桶补 0 且 `isCovered = false`」；
+图表层渲染成位图，断言空洞处**折线连续**且**画出了灰带**。
+
 ## [0.7.11] — 2026-09-18
 
 ### Added

@@ -283,9 +283,11 @@ struct TrafficChart: View {
             let segment = segments[index]
             let isolated = sizeBySegment[segment] == 1
             return [
+                // 下载在零轴上方、上传镜像到轴下方：两个方向的填充不再互相叠色
+                // （叠出来是既不像蓝也不像红的紫），柱状也不会叠成一根。
                 Sample(date: date, rate: Double(p.bytesIn) / bucket,
                        direction: L("chart.series.download"), segment: segment, isIsolated: isolated),
-                Sample(date: date, rate: Double(p.bytesOut) / bucket,
+                Sample(date: date, rate: -Double(p.bytesOut) / bucket,
                        direction: L("chart.series.upload"), segment: segment, isIsolated: isolated),
             ]
         }
@@ -304,48 +306,58 @@ struct TrafficChart: View {
     }
 
     var body: some View {
-        Chart(samples) { s in
-            switch style {
-            case .line:
-                // series 按段分组：空洞两侧的点属于不同 series，线不会跨过去
-                LineMark(x: .value(L("chart.axis.time"), s.date),
-                         y: .value(L("chart.axis.rate"), s.rate),
-                         series: .value("series", s.seriesKey))
-                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
-                    .symbol { isolatedSymbol(s) }
-                    .interpolationMethod(.catmullRom)   // 平滑曲线
-                    .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+        Chart {
+            // 零轴：下载在上、上传在下。加一条淡线，镜像关系一眼可见
+            RuleMark(y: .value(L("chart.axis.rate"), 0))
+                .foregroundStyle(.secondary.opacity(0.35))
+                .lineStyle(StrokeStyle(lineWidth: 1))
 
-            case .area:
-                // AreaMark 默认按分组**堆叠**，而 LineMark 不堆叠 ——
-                // 混用会让红色面积的顶边远高于红色线，读数完全对不上。
-                AreaMark(x: .value(L("chart.axis.time"), s.date),
-                         y: .value(L("chart.axis.rate"), s.rate),
-                         series: .value("series", s.seriesKey),
-                         stacking: .unstacked)
-                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
-                    .interpolationMethod(.catmullRom)
-                    .opacity(0.28)
-                LineMark(x: .value(L("chart.axis.time"), s.date),
-                         y: .value(L("chart.axis.rate"), s.rate),
-                         series: .value("segment", s.segment))
-                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
-                    .symbol { isolatedSymbol(s) }
-                    .interpolationMethod(.catmullRom)
-                    .lineStyle(StrokeStyle(lineWidth: 1.5))
+            ForEach(samples) { s in
+                switch style {
+                case .line:
+                    // series 按段分组：空洞两侧的点属于不同 series，线不会跨过去
+                    LineMark(x: .value(L("chart.axis.time"), s.date),
+                             y: .value(L("chart.axis.rate"), s.rate),
+                             series: .value("series", s.seriesKey))
+                        .foregroundStyle(by: .value(L("chart.series"), s.direction))
+                        .symbol { isolatedSymbol(s) }
+                        .interpolationMethod(.monotone)      // 平滑但不过冲：catmullRom 会在尖峰两侧冲出负值
+                        .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
-            case .bar:
-                // 柱状用并排而非堆叠，同样是为了让高度直接对应各自的速率
-                BarMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
-                    .foregroundStyle(by: .value(L("chart.series"), s.direction))
-                    .position(by: .value(L("chart.series"), s.direction))
-                    .cornerRadius(2)
-            }
+                case .area:
+                    // 两个方向镜像分居零轴两侧，各自从 0 填到自己的数值
+                    // 必须显式 .unstacked：AreaMark 默认按分组堆叠，镜像图里会把两个
+                    // 方向摞到一起（紫一块蓝一块，读数完全对不上 —— 0.7.x 修过一次，
+                    // 换成 yStart/yEnd 那个重载时又踩回去了，它没有 stacking 参数）。
+                    AreaMark(x: .value(L("chart.axis.time"), s.date),
+                             y: .value(L("chart.axis.rate"), s.rate),
+                             series: .value("series", s.seriesKey),
+                             stacking: .unstacked)
+                        .foregroundStyle(by: .value(L("chart.series"), s.direction))
+                        .interpolationMethod(.monotone)      // 同上，速率不能过冲到轴的另一侧
+                        .opacity(0.28)
+                    LineMark(x: .value(L("chart.axis.time"), s.date),
+                             y: .value(L("chart.axis.rate"), s.rate),
+                             series: .value("series", s.seriesKey))
+                        .foregroundStyle(by: .value(L("chart.series"), s.direction))
+                        .symbol { isolatedSymbol(s) }
+                        .interpolationMethod(.monotone)      // 同上，速率不能过冲到轴的另一侧
+                        .lineStyle(StrokeStyle(lineWidth: 1.5))
 
-            if let selectedPoint, s.date == Date(timeIntervalSince1970: selectedPoint.timestamp) {
-                RuleMark(x: .value(L("chart.axis.time"), s.date))
-                    .foregroundStyle(.secondary.opacity(0.35))
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                case .bar:
+                    // 柱状：下载向上、上传向下。**不能**再 position(by:) ——
+                    // 那两个方向在轴两侧本来就分开了，再并排只会画歪；
+                    // 而同侧堆叠更糟：高度会变成两者之和。
+                    BarMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
+                        .foregroundStyle(by: .value(L("chart.series"), s.direction))
+                        .cornerRadius(2)
+                }
+
+                if let selectedPoint, s.date == Date(timeIntervalSince1970: selectedPoint.timestamp) {
+                    RuleMark(x: .value(L("chart.axis.time"), s.date))
+                        .foregroundStyle(.secondary.opacity(0.35))
+                        .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
+                }
             }
         }
         // 固定成「所选跨度」而不是按数据自适应：只有一两个点时，
@@ -367,7 +379,8 @@ struct TrafficChart: View {
                 AxisGridLine().foregroundStyle(.primary.opacity(0.06))
                 AxisValueLabel {
                     if let rate = value.as(Double.self) {
-                        Text(ByteFormatter.rateString(bytesPerSecond: rate))
+                        // 镜像图：标签给幅值，方向看上/下位置与图例
+                        Text(ByteFormatter.rateString(bytesPerSecond: abs(rate)))
                             .font(.system(size: 9, design: .monospaced))
                     }
                 }

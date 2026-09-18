@@ -38,8 +38,9 @@ final class TimelineSegmentTests: XCTestCase {
 
 @MainActor
 final class DetailChartGapTests: XCTestCase {
-    private func render(_ points: [TimelinePoint], range: TimeInterval = 86_400) -> NSBitmapImageRep {
-        let host = NSHostingView(rootView: TrafficChart(points: points, style: .line, range: range)
+    private func render(_ points: [TimelinePoint], style: ChartStyle = .line,
+                        range: TimeInterval = 86_400) -> NSBitmapImageRep {
+        let host = NSHostingView(rootView: TrafficChart(points: points, style: style, range: range)
             .frame(width: 800, height: 320))
         host.frame = NSRect(x: 0, y: 0, width: 800, height: 320)
         host.layoutSubtreeIfNeeded()
@@ -63,6 +64,20 @@ final class DetailChartGapTests: XCTestCase {
         return count
     }
 
+    /// 匹配像素所在的行（去重、升序）。用来判断两个方向的填充各占了哪一段
+    private func markRows(_ rep: NSBitmapImageRep, xFrom: Double, xTo: Double,
+                          minAlpha: Double, isMark: (NSColor) -> Bool) -> [Int] {
+        var rows: Set<Int> = []
+        for x in Int(Double(rep.pixelsWide) * xFrom) ..< Int(Double(rep.pixelsWide) * xTo) {
+            for y in 0 ..< rep.pixelsHigh {
+                guard let color = rep.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                      color.alphaComponent > minAlpha else { continue }
+                if isMark(color) { rows.insert(y) }
+            }
+        }
+        return rows.sorted()
+    }
+
     private func bluePixels(_ rep: NSBitmapImageRep, xFrom: Double, xTo: Double) -> Int {
         markPixels(rep, xFrom: xFrom, xTo: xTo) {
             $0.blueComponent > 0.55 && $0.blueComponent - $0.redComponent > 0.25
@@ -73,6 +88,39 @@ final class DetailChartGapTests: XCTestCase {
         markPixels(rep, xFrom: xFrom, xTo: xTo) {
             $0.redComponent > 0.55 && $0.redComponent - $0.blueComponent > 0.25
         }
+    }
+
+    /// **回归**：上行必须镜像到零轴下方。面积、柱状都要 ——
+    /// 旧实现两个方向都填在轴上方：面积混成紫色，柱状叠成一根（高度是两者之和）。
+    func testUploadIsMirroredBelowTheAxis() {
+        for style in [ChartStyle.area, .bar] {
+            assertUploadIsBelowTheAxis(style)
+        }
+    }
+
+    private func assertUploadIsBelowTheAxis(_ style: ChartStyle) {
+        let t0 = Date().addingTimeInterval(-18 * 3_600).timeIntervalSince1970   // 24h 窗口的 25% 处
+        let points = [
+            TimelinePoint(timestamp: t0, bytesIn: 4_000_000, bytesOut: 1_000_000),
+            TimelinePoint(timestamp: t0 + 300, bytesIn: 4_000_000, bytesOut: 1_000_000),
+        ]
+        let rep = render(points, style: style)
+
+        // 取左端点所在的窄带：填充是 28% 不透明度，所以 alpha 门槛要比线条低
+        let blue = markRows(rep, xFrom: 0.24, xTo: 0.30, minAlpha: 0.15) {
+            $0.blueComponent > 0.55 && $0.blueComponent - $0.redComponent > 0.25
+        }
+        let red = markRows(rep, xFrom: 0.24, xTo: 0.30, minAlpha: 0.15) {
+            $0.redComponent > 0.55 && $0.redComponent - $0.blueComponent > 0.25
+        }
+        XCTAssertFalse(blue.isEmpty, "\(style.rawValue)：下载应该画出来")
+        XCTAssertFalse(red.isEmpty, "\(style.rawValue)：上传应该画出来")
+
+        let blueTop = blue.min() ?? 0, blueBottom = blue.max() ?? 0
+        let redTop = red.min() ?? 0, redBottom = red.max() ?? 0
+        XCTAssertLessThan(blueTop, redTop - 3, "\(style.rawValue)：下载整段都在零轴上方")
+        XCTAssertGreaterThan(redBottom, blueBottom + 3,
+                             "\(style.rawValue)：上传整段都在零轴下方（镜像），不叠在一起")
     }
 
     /// **回归**：两个点相隔 12 小时、中间没有任何数据，不能连成线。
@@ -96,4 +144,5 @@ final class DetailChartGapTests: XCTestCase {
         XCTAssertEqual(bluePixels(rep, xFrom: 0.45, xTo: 0.55), 0, "空洞不能被连成线")
         XCTAssertEqual(redPixels(rep, xFrom: 0.45, xTo: 0.55), 0, "上行也不能跨空洞连线")
     }
+
 }

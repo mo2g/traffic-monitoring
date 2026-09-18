@@ -4,6 +4,24 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/);
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [0.7.11] — 2026-09-18
+
+### Added
+
+- **上行方向可切换：同轴 / 镜像**（详情窗口里图例右侧的下拉，**默认同轴**）。
+
+  - **同轴**：下载与上传都画在零轴上方 —— 传统叠加画法，一眼比较两条曲线的高低；
+  - **镜像**：上传画到零轴下方，两个方向的填充各占一侧、完全不叠色，柱状也不会
+    叠成一根（收发对称的流量差别最明显，同轴时两条线会重合）。
+
+  选择存在 `com.trafficmonitor.detail.uploadBelowAxis`，和图表样式、时间跨度一样
+  是粘性设置。
+
+### Tests
+
+196 个（+1）：两种布局都渲染成位图断言 —— 同轴时上行不越过零轴（与下载同基线），
+镜像时上行整段在零轴下方。
+
 ## [0.7.10] — 2026-09-18
 
 ### Fixed

@@ -75,6 +75,9 @@
 "detail.peakDownload"      = "峰值下载";
 "detail.peakUpload"        = "峰值上传";
 "detail.peakShort"       = "峰";
+"detail.layout.help"      = "上行画在零轴上方，或镜像到下方";
+"detail.layout.above"     = "同轴";
+"detail.layout.mirror"    = "镜像";
 "detail.dataPoints"        = "数据点";
 "detail.noData"            = "这段时间没有记录到流量";
 "chart.axis.time"          = "时间";

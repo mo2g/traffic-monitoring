@@ -75,6 +75,9 @@
 "detail.peakDownload"      = "Peak down";
 "detail.peakUpload"        = "Peak up";
 "detail.peakShort"       = "peak";
+"detail.layout.help"      = "Upload above the zero axis, or mirrored below";
+"detail.layout.above"     = "Same axis";
+"detail.layout.mirror"    = "Mirrored";
 "detail.dataPoints"        = "Points";
 "detail.noData"            = "No traffic recorded in this period";
 "chart.axis.time"          = "Time";

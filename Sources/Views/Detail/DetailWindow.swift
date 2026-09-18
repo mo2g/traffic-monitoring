@@ -110,6 +110,8 @@ struct DetailWindow: View {
 
     @AppStorage("com.trafficmonitor.detail.range") private var range: Double = 86_400
     @AppStorage("com.trafficmonitor.detail.style") private var styleRaw: String = ChartStyle.line.rawValue
+    /// 上行是否画到零轴下方。默认 false = 与下载同轴（都在上方）。
+    @AppStorage("com.trafficmonitor.detail.uploadBelowAxis") private var uploadBelowAxis = false
 
     private var style: ChartStyle { ChartStyle(rawValue: styleRaw) ?? .line }
 
@@ -161,6 +163,14 @@ struct DetailWindow: View {
             }
             .pickerStyle(.segmented).frame(width: 110).labelsHidden()
             .help(L("detail.chartStyle.help"))
+
+            // 上行放在零轴上方（同轴）还是镜像到下方
+            Picker("", selection: $uploadBelowAxis) {
+                Text(L("detail.layout.above")).tag(false)
+                Text(L("detail.layout.mirror")).tag(true)
+            }
+            .pickerStyle(.menu).fixedSize().labelsHidden()
+            .help(L("detail.layout.help"))
 
             Button { dismiss() } label: {
                 Image(systemName: "xmark.circle.fill").font(.title2).foregroundStyle(.secondary)
@@ -231,7 +241,8 @@ struct DetailWindow: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            TrafficChart(points: vm.timeline, style: style, range: range)
+            TrafficChart(points: vm.timeline, style: style, range: range,
+                         mirrorsUpload: uploadBelowAxis)
                 .padding(.horizontal, 12).padding(.top, 10).padding(.bottom, 4)
         }
     }
@@ -248,6 +259,8 @@ struct TrafficChart: View {
     let points: [TimelinePoint]
     let style: ChartStyle
     let range: TimeInterval
+    /// 上行是否镜像到零轴下方。默认 false = 与下载同轴（都画在零轴上方）。
+    var mirrorsUpload = false
 
     /// 光标选中的时间点
     @State private var selected: Date?
@@ -283,11 +296,11 @@ struct TrafficChart: View {
             let segment = segments[index]
             let isolated = sizeBySegment[segment] == 1
             return [
-                // 下载在零轴上方、上传镜像到轴下方：两个方向的填充不再互相叠色
-                // （叠出来是既不像蓝也不像红的紫），柱状也不会叠成一根。
+                // 下载固定画在零轴上方；上行默认同轴（也在上方），开启镜像后取负值
+                // 画到轴下方 —— 那样两个方向的填充不再互相叠色，柱状也不会叠成一根。
                 Sample(date: date, rate: Double(p.bytesIn) / bucket,
                        direction: L("chart.series.download"), segment: segment, isIsolated: isolated),
-                Sample(date: date, rate: -Double(p.bytesOut) / bucket,
+                Sample(date: date, rate: (mirrorsUpload ? -1 : 1) * Double(p.bytesOut) / bucket,
                        direction: L("chart.series.upload"), segment: segment, isIsolated: isolated),
             ]
         }
@@ -307,7 +320,7 @@ struct TrafficChart: View {
 
     var body: some View {
         Chart {
-            // 零轴：下载在上、上传在下。加一条淡线，镜像关系一眼可见
+            // 零轴：镜像模式下是上下两个方向的分界，同轴模式下是两条曲线的基线
             RuleMark(y: .value(L("chart.axis.rate"), 0))
                 .foregroundStyle(.secondary.opacity(0.35))
                 .lineStyle(StrokeStyle(lineWidth: 1))
@@ -325,10 +338,9 @@ struct TrafficChart: View {
                         .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
                 case .area:
-                    // 两个方向镜像分居零轴两侧，各自从 0 填到自己的数值
-                    // 必须显式 .unstacked：AreaMark 默认按分组堆叠，镜像图里会把两个
-                    // 方向摞到一起（紫一块蓝一块，读数完全对不上 —— 0.7.x 修过一次，
-                    // 换成 yStart/yEnd 那个重载时又踩回去了，它没有 stacking 参数）。
+                    // 各自从 0 填到自己的数值。必须显式 .unstacked：AreaMark 默认按分组
+                    // 堆叠，会把两个方向摞到一起（同轴时紫一块蓝一块，读数完全对不上 ——
+                    // 0.7.x 修过一次，换成 yStart/yEnd 那个重载时又踩回去了）。
                     AreaMark(x: .value(L("chart.axis.time"), s.date),
                              y: .value(L("chart.axis.rate"), s.rate),
                              series: .value("series", s.seriesKey),
@@ -345,9 +357,8 @@ struct TrafficChart: View {
                         .lineStyle(StrokeStyle(lineWidth: 1.5))
 
                 case .bar:
-                    // 柱状：下载向上、上传向下。**不能**再 position(by:) ——
-                    // 那两个方向在轴两侧本来就分开了，再并排只会画歪；
-                    // 而同侧堆叠更糟：高度会变成两者之和。
+                    // 柱状：不能 position(by:)（会画歪），更不能让 Swift Charts 默认堆叠
+                    // （高度会变成两者之和）。同轴时两根并排叠着看，镜像时各占一侧。
                     BarMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
                         .foregroundStyle(by: .value(L("chart.series"), s.direction))
                         .cornerRadius(2)

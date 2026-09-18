@@ -127,7 +127,7 @@ status and a start/stop button.
 | Search | Filter by process name (`⌘F`) |
 | Sidebar | Time range (today / this week / this month) and per-app vs grouped view |
 | Menu bar | Live up/down rates on two lines (`1.2K/s↑` / `1.2M/s↓`); click for the busiest apps and quick actions |
-| Timeline window | Switch chart style (curve / area / bar) and time range; both choices are remembered |
+| Timeline window | Switch chart style (curve / area / bar), time range, and whether upload is mirrored below the axis; all are remembered |
 | Settings (`⌘,`) | Language, menu bar font size, sampling interval, flush interval, database size and cleanup, groups, alert rules, debug log |
 
 Closing the main window turns the app into a **pure menu bar app** — the Dock icon and

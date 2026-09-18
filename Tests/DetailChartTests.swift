@@ -39,8 +39,10 @@ final class TimelineSegmentTests: XCTestCase {
 @MainActor
 final class DetailChartGapTests: XCTestCase {
     private func render(_ points: [TimelinePoint], style: ChartStyle = .line,
-                        range: TimeInterval = 86_400) -> NSBitmapImageRep {
-        let host = NSHostingView(rootView: TrafficChart(points: points, style: style, range: range)
+                        range: TimeInterval = 86_400,
+                        mirrorsUpload: Bool = true) -> NSBitmapImageRep {
+        let host = NSHostingView(rootView: TrafficChart(points: points, style: style, range: range,
+                                                        mirrorsUpload: mirrorsUpload)
             .frame(width: 800, height: 320))
         host.frame = NSRect(x: 0, y: 0, width: 800, height: 320)
         host.layoutSubtreeIfNeeded()
@@ -90,7 +92,33 @@ final class DetailChartGapTests: XCTestCase {
         }
     }
 
-    /// **回归**：上行必须镜像到零轴下方。面积、柱状都要 ——
+    private func fills(_ rep: NSBitmapImageRep) -> (blue: [Int], red: [Int]) {
+        let blue = markRows(rep, xFrom: 0.24, xTo: 0.30, minAlpha: 0.15) {
+            $0.blueComponent > 0.55 && $0.blueComponent - $0.redComponent > 0.25
+        }
+        let red = markRows(rep, xFrom: 0.24, xTo: 0.30, minAlpha: 0.15) {
+            $0.redComponent > 0.55 && $0.redComponent - $0.blueComponent > 0.25
+        }
+        return (blue, red)
+    }
+
+    /// **默认布局（同轴）**：两个方向都画在零轴上方 —— 上行不能跑到轴下方。
+    func testUploadStaysAboveTheAxisByDefault() {
+        let t0 = Date().addingTimeInterval(-18 * 3_600).timeIntervalSince1970
+        let points = [
+            TimelinePoint(timestamp: t0, bytesIn: 4_000_000, bytesOut: 1_000_000),
+            TimelinePoint(timestamp: t0 + 300, bytesIn: 4_000_000, bytesOut: 1_000_000),
+        ]
+        let rep = render(points, style: .area, mirrorsUpload: false)
+        let (blue, red) = fills(rep)
+        XCTAssertFalse(blue.isEmpty, "下载应该画出来")
+        XCTAssertFalse(red.isEmpty, "上传应该画出来")
+        XCTAssertLessThanOrEqual(red.max() ?? 0, (blue.max() ?? 0) + 3,
+                                 "同轴模式下上行也在零轴上方（基线一致），不会伸到轴下")
+        XCTAssertLessThan(blue.min() ?? 0, red.min() ?? 0, "上传更小，顶点应低于下载顶点")
+    }
+
+    /// **镜像布局（可选）**：上行镜像到零轴下方。面积、柱状都要 ——
     /// 旧实现两个方向都填在轴上方：面积混成紫色，柱状叠成一根（高度是两者之和）。
     func testUploadIsMirroredBelowTheAxis() {
         for style in [ChartStyle.area, .bar] {

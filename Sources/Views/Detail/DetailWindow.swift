@@ -49,6 +49,25 @@ enum TimelineBucket {
         default:          3_600   // 更长 → 1 小时
         }
     }
+
+    /// 稀疏数据点的分段：相邻两点之间空了一个以上的桶 → 中间没有采集到数据，
+    /// 线段必须断开。返回每个点所属的段号（从 0 开始，逐洞递增）。
+    ///
+    /// 阈值取 1.5 个桶：正常相邻是 1 个桶，缺一个就变成 2 个，跨过阈值即断。
+    static func segmentIndices(_ points: [TimelinePoint], bucket: TimeInterval) -> [Int] {
+        var indices: [Int] = []
+        indices.reserveCapacity(points.count)
+        var segment = 0
+        var previous: TimeInterval?
+        for point in points {
+            if let previous, point.timestamp - previous > bucket * 1.5 {
+                segment += 1
+            }
+            indices.append(segment)
+            previous = point.timestamp
+        }
+        return indices
+    }
 }
 
 // MARK: - 图表样式
@@ -179,7 +198,10 @@ struct DetailWindow: View {
             divider
             stat(L("detail.peakUpload"), ByteFormatter.rateString(bytesPerSecond: peakOut), .red.opacity(0.7))
             Spacer()
-            stat(L("detail.dataPoints"), "\(vm.timeline.count)", .secondary)
+            // 补零之后 timeline 里大部分点是「采集到了但没流量」，
+            // 这里只数真有流量的那些点
+            stat(L("detail.dataPoints"),
+                 "\(vm.timeline.filter { $0.totalBytes > 0 }.count)", .secondary)
         }
     }
 
@@ -222,7 +244,7 @@ struct DetailWindow: View {
 /// 旧实现是手绘 `Path` + 手算坐标 + 手摆刻度标签，约 200 行，只能画直线折线，
 /// 且坐标轴刻度、hover 命中、深色模式配色都得自己维护。
 /// Swift Charts 直接给出平滑插值、原生坐标轴与选取覆盖层，样式切换也只是换 Mark 类型。
-private struct TrafficChart: View {
+struct TrafficChart: View {
     let points: [TimelinePoint]
     let style: ChartStyle
     let range: TimeInterval
@@ -240,45 +262,75 @@ private struct TrafficChart: View {
         let date: Date
         let rate: Double
         let direction: String
+        /// 所属线段。相邻数据点之间空了一个桶就换段 —— 画线时不能跨段连，
+        /// 否则「6 小时没有数据」会被画成一条斜线。
+        let segment: Int
+        /// 这一段只有它自己：断线之后得画个圆点，不然什么都没有。
+        let isIsolated: Bool
+
+        /// 画线的分组键：**段 × 方向**。
+        /// 只按段分组会把同一段的「下载点」和「上传点」连起来，画出一条竖线。
+        var seriesKey: String { "\(direction)#\(segment)" }
     }
 
     private var samples: [Sample] {
-        points.flatMap { p -> [Sample] in
+        let segments = TimelineBucket.segmentIndices(points, bucket: bucket)
+        var sizeBySegment: [Int: Int] = [:]
+        for segment in segments { sizeBySegment[segment, default: 0] += 1 }
+
+        return points.enumerated().flatMap { index, p -> [Sample] in
             let date = Date(timeIntervalSince1970: p.timestamp)
+            let segment = segments[index]
+            let isolated = sizeBySegment[segment] == 1
             return [
-                Sample(date: date, rate: Double(p.bytesIn) / bucket, direction: L("chart.series.download")),
-                Sample(date: date, rate: Double(p.bytesOut) / bucket, direction: L("chart.series.upload")),
+                Sample(date: date, rate: Double(p.bytesIn) / bucket,
+                       direction: L("chart.series.download"), segment: segment, isIsolated: isolated),
+                Sample(date: date, rate: Double(p.bytesOut) / bucket,
+                       direction: L("chart.series.upload"), segment: segment, isIsolated: isolated),
             ]
         }
     }
 
     private var selectedPoint: TimelinePoint? {
-        guard let selected else { return nil }
-        return points.min {
-            abs($0.timestamp - selected.timeIntervalSince1970)
-                < abs($1.timestamp - selected.timeIntervalSince1970)
-        }
+        guard let selected,
+              let nearest = points.min(by: {
+                  abs($0.timestamp - selected.timeIntervalSince1970)
+                      < abs($1.timestamp - selected.timeIntervalSince1970)
+              })
+        else { return nil }
+        // 光标落在空洞里（离最近的数据点超过一个桶）时不弹气泡 ——
+        // 那里没有数据，弹一个远处的读数反而是误导
+        return abs(nearest.timestamp - selected.timeIntervalSince1970) <= bucket ? nearest : nil
     }
 
     var body: some View {
         Chart(samples) { s in
             switch style {
             case .line:
-                LineMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
+                // series 按段分组：空洞两侧的点属于不同 series，线不会跨过去
+                LineMark(x: .value(L("chart.axis.time"), s.date),
+                         y: .value(L("chart.axis.rate"), s.rate),
+                         series: .value("series", s.seriesKey))
                     .foregroundStyle(by: .value(L("chart.series"), s.direction))
+                    .symbol { isolatedSymbol(s) }
                     .interpolationMethod(.catmullRom)   // 平滑曲线
                     .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
 
             case .area:
                 // AreaMark 默认按分组**堆叠**，而 LineMark 不堆叠 ——
                 // 混用会让红色面积的顶边远高于红色线，读数完全对不上。
-                AreaMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate),
+                AreaMark(x: .value(L("chart.axis.time"), s.date),
+                         y: .value(L("chart.axis.rate"), s.rate),
+                         series: .value("series", s.seriesKey),
                          stacking: .unstacked)
                     .foregroundStyle(by: .value(L("chart.series"), s.direction))
                     .interpolationMethod(.catmullRom)
                     .opacity(0.28)
-                LineMark(x: .value(L("chart.axis.time"), s.date), y: .value(L("chart.axis.rate"), s.rate))
+                LineMark(x: .value(L("chart.axis.time"), s.date),
+                         y: .value(L("chart.axis.rate"), s.rate),
+                         series: .value("segment", s.segment))
                     .foregroundStyle(by: .value(L("chart.series"), s.direction))
+                    .symbol { isolatedSymbol(s) }
                     .interpolationMethod(.catmullRom)
                     .lineStyle(StrokeStyle(lineWidth: 1.5))
 
@@ -296,8 +348,11 @@ private struct TrafficChart: View {
                     .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
             }
         }
-        .chartForegroundStyleScale([L("chart.series.download"): Color.blue,
-                                    L("chart.series.upload"): Color.red])
+        // 固定成「所选跨度」而不是按数据自适应：只有一两个点时，
+        // 自适应会把轴压到那两点上，位置信息就没了
+        .chartXScale(domain: Date().addingTimeInterval(-range) ... Date())
+        .chartForegroundStyleScale([L("chart.series.download"): seriesColor(L("chart.series.download")),
+                                    L("chart.series.upload"): seriesColor(L("chart.series.upload"))])
         .chartLegend(position: .top, alignment: .leading, spacing: 8)
         .chartXAxis {
             AxisMarks(values: .automatic(desiredCount: 6)) { value in
@@ -346,6 +401,24 @@ private struct TrafficChart: View {
         let x = (proxy.position(forX: date) ?? 0) + plotRect.origin.x
         // 贴边时把气泡拉回可视区内
         return min(max(x, 90), geo.size.width - 90)
+    }
+
+    /// 孤点（这一段只有它自己）画个小圆点；成段的点不画，免得密数据糊成一片。
+    ///
+    /// 自定义符号**不会**继承 mark 的 `foregroundStyle`，得自己上色 ——
+    /// 否则会落回系统强调色（蓝），上传方向的孤点会跟着变蓝。
+    @ViewBuilder
+    private func isolatedSymbol(_ sample: Sample) -> some View {
+        if sample.isIsolated {
+            Circle()
+                .fill(seriesColor(sample.direction))
+                .frame(width: 5, height: 5)
+        }
+    }
+
+    /// 系列色只在两处用：样式表与孤点符号。两处必须一致。
+    private func seriesColor(_ direction: String) -> Color {
+        direction == L("chart.series.upload") ? .red : .blue
     }
 
     private func tooltip(for point: TimelinePoint) -> some View {

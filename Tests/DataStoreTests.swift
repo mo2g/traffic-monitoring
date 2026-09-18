@@ -120,7 +120,10 @@ final class DataStoreTests: XCTestCase {
         }
     }
 
-    func testQueryTimelineEmptyForUnknownProcess() async throws {
+    /// 查一个从没传过流量的进程：结论不是「没有数据」，而是「这段时间它一直是 0」——
+    /// 采集器在跑（同一分钟别的进程有行），所以有采集的桶都要回 0。
+    /// 只有整分钟谁都没数据（应用关了 / 机器睡了）才不返回，画图时断成洞。
+    func testQueryTimelineForUnknownProcessIsZeroNotEmpty() async throws {
         let now = Date().timeIntervalSince1970
         let events = [TrafficEvent(
             id: nil, timestamp: now, interval: 5,
@@ -132,7 +135,8 @@ final class DataStoreTests: XCTestCase {
         let timeline = try await store.queryTimeline(
             processKey: "DoesNotExist", since: now - 3600
         )
-        XCTAssertTrue(timeline.isEmpty)
+        XCTAssertEqual(timeline.count, 1, "只有 now 那一分钟有采集")
+        XCTAssertEqual(timeline.first?.totalBytes, 0, "没传过 = 0，而不是空洞")
     }
 
     // MARK: - Delete
@@ -447,5 +451,63 @@ final class TimelinePeakTests: XCTestCase {
         XCTAssertEqual(point.bytesIn, 900, "同一个展示桶里流量求和")
         XCTAssertEqual(point.peakIn, 12_345, accuracy: 0.001, "峰值取最大，不是平均也不是最后一行")
         XCTAssertEqual(point.peakOut, 500, accuracy: 0.001)
+    }
+}
+
+
+// ============================================================
+// MARK: - 时间线的「有采集」与「空洞」
+// ============================================================
+
+/// 时间线不能只回「有流量的桶」：
+/// - 监控器在跑、该进程没流量的桶 → 回 0（画出来是贴地的线，说明「确实没传」）；
+/// - 整分钟谁都没数据（应用关了 / 机器睡了）→ **不返回**，上层据此断线。
+///
+/// 否则 07:58 和 14:08 两次突发之间会被连成一条斜线，看着像一直在传。
+final class TimelineCoverageTests: XCTestCase {
+    var store: DataStore!
+    var tempDir: URL!
+
+    override func setUp() async throws {
+        tempDir = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("TimelineCoverage_\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        store = DataStore()
+        try await store.setup(at: tempDir.appendingPathComponent("coverage.db"))
+    }
+
+    override func tearDown() async throws {
+        if let dir = tempDir { try? FileManager.default.removeItem(at: dir) }
+    }
+
+    private func event(at ts: TimeInterval, key: String,
+                       in bytesIn: Int64, out bytesOut: Int64,
+                       peakIn: Double = 0) -> TrafficEvent {
+        TrafficEvent(id: nil, timestamp: ts, interval: 60, processKey: key,
+                     bundleId: nil, displayName: key,
+                     bytesIn: bytesIn, bytesOut: bytesOut, peakIn: peakIn, peakOut: 0)
+    }
+
+    func testFillsIdleBucketsWithZeroAndSkipsUncoveredOnes() async throws {
+        let base = 1_700_000_040.0            // 整分钟对齐
+        try await store.insertEvents([
+            // 别的进程在这三分钟有流量 → 采集器在跑
+            event(at: base,       key: "other", in: 10, out: 0),
+            event(at: base + 60,  key: "other", in: 10, out: 0),
+            event(at: base + 120, key: "other", in: 10, out: 0),
+            // 被测进程只在首尾两分钟传了东西
+            event(at: base,       key: "mine", in: 1_000, out: 100, peakIn: 500),
+            event(at: base + 120, key: "mine", in: 2_000, out: 200, peakIn: 900),
+        ])
+
+        let points = try await store.queryTimeline(
+            processKey: "mine", since: base - 1, until: base + 200, bucketSeconds: 60)
+
+        XCTAssertEqual(points.map(\.timestamp), [base, base + 60, base + 120],
+                       "base+180 谁都没数据 → 不返回（空洞）")
+        XCTAssertEqual(points[0].peakIn, 500, accuracy: 0.001)
+        XCTAssertEqual(points[1].bytesIn, 0, "采集器在跑、进程没流量 = 真实的 0")
+        XCTAssertEqual(points[1].bytesOut, 0)
+        XCTAssertEqual(points[2].bytesIn, 2_000)
     }
 }

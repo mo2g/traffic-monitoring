@@ -212,7 +212,14 @@ actor DataStore {
         }
     }
 
-    /// 查询单个进程的时间线数据（按时间桶聚合）
+    /// 查询单个进程的时间线数据（按时间桶聚合）。
+    ///
+    /// 返回的是**这段时间里监控器确实在采集**的每个桶：
+    /// - 该进程有流量 → 真实数值；
+    /// - 该进程没流量，但同一分钟别的进程有 → 0（画出来是贴地的线，「确实没传」）；
+    /// - 整分钟谁都没有数据（应用关了 / 机器睡了）→ **不返回**。
+    ///   上层据此断开线段 —— 否则 07:58 和 14:08 两次突发会被连成一条斜线，
+    ///   看起来像这六个小时一直在传。
     func queryTimeline(
         processKey: String,
         since: TimeInterval,
@@ -222,6 +229,17 @@ actor DataStore {
         guard let writer = dbWriter else { return [] }
 
         return try writer.read { db in
+            // 有采集的桶：这一分钟里任何一个进程写过行
+            let covered = try TimeInterval.fetchSet(
+                db,
+                sql: """
+                    SELECT DISTINCT CAST(timestamp / ? AS INTEGER) * ? AS bucket
+                    FROM trafficEvent
+                    WHERE timestamp >= ? AND timestamp <= ?
+                    """,
+                arguments: [bucketSeconds, bucketSeconds, since, until]
+            )
+
             let rows = try Row.fetchAll(db, sql: """
                 SELECT CAST(timestamp / ? AS INTEGER) * ? AS bucket,
                        SUM(bytesIn)  AS totalIn,
@@ -237,14 +255,21 @@ actor DataStore {
                 ORDER BY bucket
             """, arguments: [bucketSeconds, bucketSeconds, since, until, processKey])
 
-            return rows.map { row in
-                TimelinePoint(
+            var byBucket: [TimeInterval: TimelinePoint] = [:]
+            for row in rows {
+                let point = TimelinePoint(
                     timestamp: row["bucket"],
                     bytesIn: row["totalIn"],
                     bytesOut: row["totalOut"],
                     peakIn: row["peakIn"],
                     peakOut: row["peakOut"]
                 )
+                byBucket[point.timestamp] = point
+            }
+
+            // 有采集的桶逐个出点（没流量就是 0）；没采集的桶不出现 = 洞
+            return covered.sorted().map { bucket in
+                byBucket[bucket] ?? TimelinePoint(timestamp: bucket, bytesIn: 0, bytesOut: 0)
             }
         }
     }
